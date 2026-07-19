@@ -126,6 +126,7 @@ test("no orders → all-null StopInfo", () => {
   const t = longTrade();
   expect(inferStops(t, [])).toEqual({
     initialStop: null,
+    initialStopType: null,
     effectiveStop: null,
     effectiveTp: null,
     stopOrderId: null,

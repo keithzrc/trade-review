@@ -216,6 +216,32 @@ test("a profit-side stop (no valid R) is never marked unreliable — no_stop fir
   expect(flags).not.toContain("unreliable_stop"); // never both
 });
 
+test("a STOP_LIMIT initial stop is never marked unreliable — a gap-through is a genuine excess_loss", async () => {
+  // Same breach-and-survive shape as the unreliable case, but the protective order is a STOP_LIMIT: it
+  // can trigger yet fail to fill when price gaps past its limit, so the recorded 99.8 trigger really can
+  // be the initial stop and the −10R a legitimate excess loss. Must keep R + fire excess_loss, not flag.
+  const db = openTestDb();
+  const client = stubClient({
+    getHistoryFills: async () => [
+      { id: "f1", orderId: "o1", symbol: "US.AAPL", side: "BUY", qty: 100, price: 100, fee: 0, currency: "USD", time: 1000, account: "acc1" },
+      { id: "f2", orderId: "o2", symbol: "US.AAPL", side: "SELL", qty: 100, price: 98, fee: 0, currency: "USD", time: 7_200_000, account: "acc1" },
+    ],
+    getHistoryOrders: async () => [
+      { id: "s1", symbol: "US.AAPL", side: "SELL", type: "STOP_LIMIT", qty: 100, price: 99.8, triggerPrice: 99.8, status: "FILLED_ALL", createTime: 1500, updateTime: null, account: "acc1" },
+    ],
+  });
+  const candles: CandleSource = {
+    getCandles: async () => [{ time: 1000, open: 100, high: 101, low: 90, close: 98, volume: 1 }],
+  };
+  await runSync({ db, client, candles, config: DEFAULT_RULE_CONFIG, now: 10_000 });
+  const t = allTrades(db)[0]!;
+  expect(t.stopUnreliable).toBe(false); // stop-limit gap-through is not proof of a moved stop
+  expect(t.risk).toBeCloseTo(20, 5); // R basis kept
+  const flags = flagsForTrade(db, t.id).map((f) => f.ruleId);
+  expect(flags).not.toContain("unreliable_stop");
+  expect(flags).toContain("excess_loss"); // the −10R loss is real by this stop
+});
+
 test("runSync snapshots account equity per currency and surfaces trade risk %", async () => {
   const db = openTestDb();
   const fundsCalls: Array<{ currency: number }> = [];

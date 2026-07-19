@@ -323,7 +323,12 @@ export async function rebuildDerived(
     // split-corrupted stop, and without a real R there's nothing to flag as "suspect" — detecting here
     // would fire unreliable_stop AND no_stop together and claim an R that doesn't exist. So an
     // unreliable stop always implies a non-null risk (a present-but-suspect R), never a missing one.
-    const liveUnreliable = risk !== null && isUnreliableStop({
+    // Also skip STOP_LIMIT initial stops: a stop-limit can legitimately TRIGGER but not FILL when price
+    // gaps through its limit, so a mid-hold breach doesn't prove the stop was moved — the recorded
+    // trigger may well be the real initial stop and the deeper loss a genuine excess_loss. Only market
+    // stops (plain STOP / TRAILING_STOP) reliably fill on breach. (Manual stops: isUnreliableStop exempts
+    // them; when ms is set this inferred type is irrelevant to the risk basis anyway.)
+    const liveUnreliable = risk !== null && stop.initialStopType !== "STOP_LIMIT" && isUnreliableStop({
       avgEntry: t.avgEntry,
       realizedPnl: t.realizedPnl,
       stop: initialStop,

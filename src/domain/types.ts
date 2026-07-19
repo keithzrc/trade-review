@@ -127,6 +127,7 @@ export interface Candle {
 /** Output of stop inference for one trade. */
 export interface StopInfo {
   initialStop: number | null; // earliest protective stop — the planned risk (use for R-multiple)
+  initialStopType: OrderType | null; // type of the order behind initialStop (STOP_LIMIT may not fill)
   effectiveStop: number | null; // latest protective stop — what was actually protecting at the end
   effectiveTp: number | null;
   stopOrderId: string | null; // id of the order behind effectiveStop (provenance)

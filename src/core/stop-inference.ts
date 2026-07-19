@@ -82,6 +82,7 @@ export function inferStops(trade: Trade, orders: RawOrder[]): StopInfo {
 
   return {
     initialStop: initial?.triggerPrice ?? null,
+    initialStopType: initial?.type ?? null,
     effectiveStop: effective?.triggerPrice ?? null,
     effectiveTp: tp?.price ?? null,
     stopOrderId: effective?.id ?? null,

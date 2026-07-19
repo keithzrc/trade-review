@@ -197,6 +197,23 @@ test("oversized: risk above 1.5x recent average", () => {
   expect(ids(flags)).toContain("oversized");
 });
 
+test("oversized: an unreliable prior stop's suspect risk is excluded from the baseline", () => {
+  // Two trusted trades set a 100 baseline; a prior unreliable trade with a fabricated tiny 2 risk must
+  // NOT drag the average down (which would make an otherwise-normal 200 risk look 3x+ oversized).
+  const recent = [
+    { ...base(), risk: 100 },
+    { ...base(), risk: 100 },
+    { ...base(), risk: 2, stopUnreliable: true }, // suspect 1R — must not poison the baseline
+  ];
+  const trade = { ...base(), risk: 200 }; // 2x the trusted avg 100 → oversized on merit, not distortion
+  const flags = ids(evaluate(trade, ctx({ recentClosedTrades: recent }), DEFAULT_RULE_CONFIG));
+  expect(flags).toContain("oversized");
+  // And a normal 120 risk (1.2x the trusted avg) must NOT fire — it only would if the suspect 2 pulled
+  // the baseline down to ~67.
+  const normal = { ...base(), risk: 120 };
+  expect(ids(evaluate(normal, ctx({ recentClosedTrades: recent }), DEFAULT_RULE_CONFIG))).not.toContain("oversized");
+});
+
 test("round_tripped_gain: peak >= 1R then closed red", () => {
   // risk 100, mfe 2/share * 100 qty = 200 peak gain (2R), exited at -10.
   const trade = { ...base(), risk: 100, maxQty: 100, mfe: 2, realizedPnl: -10 };

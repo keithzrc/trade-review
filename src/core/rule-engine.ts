@@ -110,10 +110,12 @@ function improperPyramid(trade: Trade, fills: RawFill[], extendedPct: number): b
   return false;
 }
 
-/** Average risk of recent closed trades IN THE SAME CURRENCY (never mix HKD and USD sizes). */
+/** Average risk of recent closed trades IN THE SAME CURRENCY (never mix HKD and USD sizes). Trades
+ * with an unreliable stop are skipped — their risk is a suspect (often fabricated tiny/huge) 1R, so
+ * letting it into the baseline would trip or mask `oversized` on a later, trusted trade. */
 function avgRecentRisk(recent: Trade[], currency: string): number | null {
   const risks = recent
-    .filter((t) => t.currency === currency && t.risk !== null)
+    .filter((t) => t.currency === currency && t.risk !== null && !t.stopUnreliable)
     .map((t) => t.risk as number);
   if (risks.length === 0) return null;
   return risks.reduce((a, b) => a + b, 0) / risks.length;

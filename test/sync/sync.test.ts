@@ -6,6 +6,7 @@ import { DEFAULT_RULE_CONFIG, type Candle } from "../../src/domain/types";
 import type { Account, CandleSource, FutuClient } from "../../src/domain/ports";
 import { allTrades, flagsForTrade, positionsAt } from "../../src/store/repos";
 import { getSyncState } from "../../src/store/sync-state";
+import { upsertJournal } from "../../src/store/journal";
 import { tradeDetail } from "../../src/api/views";
 
 const ACC: Account = { id: "acc1", trdEnv: 1, markets: [2] };
@@ -152,6 +153,39 @@ test("runSync carries the unreliable-stop flag across a candle outage (no transi
   expect(flags).toContain("unreliable_stop");
   expect(flags).not.toContain("no_stop");
   expect(flags).not.toContain("excess_loss");
+});
+
+test("a manual stop clears the unreliable flag even during a candle outage (carry must not override it)", async () => {
+  const db = openTestDb();
+  const fills = [
+    { id: "f1", orderId: "o1", symbol: "US.AAPL", side: "BUY" as const, qty: 100, price: 100, fee: 0, currency: "USD", time: 1000, account: "acc1" },
+    { id: "f2", orderId: "o2", symbol: "US.AAPL", side: "SELL" as const, qty: 100, price: 98, fee: 0, currency: "USD", time: 7_200_000, account: "acc1" },
+  ];
+  const orders = [
+    { id: "s1", symbol: "US.AAPL", side: "SELL" as const, type: "STOP" as const, qty: 100, price: null, triggerPrice: 99.8, status: "FILLED_ALL", createTime: 1500, updateTime: null, account: "acc1" },
+  ];
+  const withCandles: CandleSource = {
+    getCandles: async () => [{ time: 1000, open: 100, high: 101, low: 90, close: 98, volume: 1 }],
+  };
+  // sync 1: candles present → unreliable.
+  const client = stubClient({ getHistoryFills: async () => fills, getHistoryOrders: async () => orders });
+  await runSync({ db, client, candles: withCandles, config: DEFAULT_RULE_CONFIG, now: 10_000 });
+  const id = allTrades(db)[0]!.id;
+  expect(allTrades(db)[0]!.stopUnreliable).toBe(true);
+  // The user asserts the real stop via a Manual override — set to the SAME price as the effective stop,
+  // the exact case where the outage carry (keyed on effectiveStop) could wrongly keep the flag stuck.
+  upsertJournal(db, {
+    tradeId: id, thesis: null, emotion: null, conviction: null, rating: null,
+    notes: null, manualStop: 99.8, setup: null, tags: [], updatedAt: 1,
+  });
+  // sync 2: candle outage. The manual stop is authoritative → the flag must clear NOW, not wait for candles.
+  await runSync({ db, client, candles: noCandles, config: DEFAULT_RULE_CONFIG, now: 20_000 });
+  const t = allTrades(db)[0]!;
+  expect(t.stopUnreliable).toBe(false); // manual override wins over the carry
+  const flags = flagsForTrade(db, t.id).map((f) => f.ruleId);
+  expect(flags).not.toContain("unreliable_stop");
+  // With the user's own stop honored, the −10R loss is now a genuine excess_loss by their own basis.
+  expect(flags).toContain("excess_loss");
 });
 
 test("runSync snapshots account equity per currency and surfaces trade risk %", async () => {

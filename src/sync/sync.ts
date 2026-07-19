@@ -332,16 +332,22 @@ export async function rebuildDerived(
 
     // The verdict needs candles; on an outage (no bars) heldMae is null → the check reads reliable.
     // Carry the PRIOR verdict so the flag (and its R-average exclusion) doesn't flicker off until
-    // candles return — mirrors the mae carry. Only when NOTHING that feeds the verdict changed: same
-    // fills AND the same present loss-side stop basis (so a newly-added manual/order stop recomputes
-    // normally, not clobbered). A no-stop (null stop) or profit-side stop is excluded.
+    // candles return — mirrors the mae carry. Only when NOTHING that feeds the verdict changed:
+    //   - `ms == null`: a manual stop is the AUTHORITATIVE override (isUnreliableStop exempts it), so a
+    //     newly-added manual stop must clear the flag now, not stay stuck behind the carry until candles
+    //     return — even if its price equals the prior effective stop;
+    //   - same fills (sameInputs fixes avgEntry/realizedPnl/window) AND the same initial risk basis
+    //     (`priorT.risk === risk`, i.e. an unchanged stop distance given fixed avgEntry/maxQty) AND the
+    //     same present loss-side effective stop. A no-stop (null) or profit-side stop is excluded.
     const initialOnProfitSide =
       initialStop !== null && (t.direction === "LONG" ? initialStop > t.avgEntry : initialStop < t.avgEntry);
     const carriedUnreliable =
       bars.length === 0 &&
       sameInputs &&
+      ms == null &&
       priorT !== undefined &&
       priorT.stopUnreliable &&
+      priorT.risk === risk &&
       effectiveStop !== null &&
       priorT.effectiveStop === effectiveStop &&
       !initialOnProfitSide;

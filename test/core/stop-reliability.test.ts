@@ -7,7 +7,7 @@ function amd(over: Partial<Parameters<typeof isUnreliableStop>[0]> = {}) {
   return isUnreliableStop({
     direction: "LONG",
     avgEntry: 511.17,
-    avgExit: 508.36,
+    closingExit: 508.36,
     realizedPnl: -11.24,
     stop: 510.89,
     mae: 13.02,
@@ -27,7 +27,7 @@ test("gap/slippage stop-out: exited AT the adverse low (no recovery) → reliabl
     isUnreliableStop({
       direction: "LONG",
       avgEntry: 100,
-      avgExit: 90,
+      closingExit: 90,
       realizedPnl: -1000,
       stop: 95,
       mae: 10, // breached the 5-wide stop...
@@ -43,7 +43,7 @@ test("never breached the stop → reliable (a clean ~1R loss like ANET)", () => 
     isUnreliableStop({
       direction: "LONG",
       avgEntry: 173.42,
-      avgExit: 170.305,
+      closingExit: 170.305,
       realizedPnl: -46.72,
       stop: 170.21,
       mae: 3.11,
@@ -54,7 +54,24 @@ test("never breached the stop → reliable (a clean ~1R loss like ANET)", () => 
 });
 
 test("a winner is never flagged (losers only)", () => {
-  expect(amd({ realizedPnl: 50, avgExit: 520 })).toBe(false);
+  expect(amd({ realizedPnl: 50, closingExit: 520 })).toBe(false);
+});
+
+test("scale-out-then-stopped: closing at the low → reliable (avgExit would fake a recovery)", () => {
+  // LONG entry 100, stop 98 (dist 2). Sold half at 110 early, then the rest stopped at 84 = the low.
+  // avgExit would be 97 (recovery 13, a false positive); the CLOSING fill 84 is at the low → recovery 0.
+  expect(
+    isUnreliableStop({
+      direction: "LONG",
+      avgEntry: 100,
+      closingExit: 84, // the fill that closed the position, at the adverse low
+      realizedPnl: -300,
+      stop: 98,
+      mae: 16, // low 84
+      manual: false,
+      recoverMult: 1,
+    }),
+  ).toBe(false); // recovery = 16 - (100 - 84) = 0 → a real stop-out, excess_loss preserved
 });
 
 test("a manual stop is the user's explicit assertion — never second-guessed", () => {
@@ -64,7 +81,7 @@ test("a manual stop is the user's explicit assertion — never second-guessed", 
 test("no stop / no mae / no exit / open trade → reliable (nothing to judge)", () => {
   expect(amd({ stop: null })).toBe(false);
   expect(amd({ mae: null })).toBe(false);
-  expect(amd({ avgExit: null })).toBe(false);
+  expect(amd({ closingExit: null })).toBe(false);
   expect(amd({ realizedPnl: null })).toBe(false);
 });
 
@@ -73,7 +90,7 @@ test("recoverMult raises the bar: a marginal recovery below the threshold stays 
   const args = {
     direction: "LONG" as const,
     avgEntry: 100,
-    avgExit: 96,
+    closingExit: 96,
     realizedPnl: -400,
     stop: 98,
     mae: 5,
@@ -89,7 +106,7 @@ test("SHORT mirror: price rose past the stop then fell back to a smaller loss �
     isUnreliableStop({
       direction: "SHORT",
       avgEntry: 100,
-      avgExit: 101,
+      closingExit: 101,
       realizedPnl: -100,
       stop: 102,
       mae: 10,
@@ -104,7 +121,7 @@ test("SHORT gap-through: covered AT the high (no recovery) → reliable", () => 
     isUnreliableStop({
       direction: "SHORT",
       avgEntry: 100,
-      avgExit: 110,
+      closingExit: 110,
       realizedPnl: -1000,
       stop: 102,
       mae: 10,

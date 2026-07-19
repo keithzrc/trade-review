@@ -316,10 +316,16 @@ export async function rebuildDerived(
     // survived — a trailed/moved stop whose only surviving record is its final trigger), void risk/R
     // so a fabricated 1R doesn't drive a bogus excess_loss/round_tripped_gain. The unreliable_stop
     // flag (below) explains it. Manual stops are exempt inside isUnreliableStop.
+    // The CLOSING exit = the last fill by time (for a closed trade it's always a position-reducing
+    // exit). Used instead of avgExit so an early profit-taking leg can't fake a recovery.
+    const closingFill = tradeFills.reduce<RawFill | null>(
+      (latest, f) => (latest === null || f.time > latest.time ? f : latest),
+      null,
+    );
     const stopUnreliable = isUnreliableStop({
       direction: t.direction,
       avgEntry: t.avgEntry,
-      avgExit: t.avgExit,
+      closingExit: closingFill?.price ?? t.avgExit,
       realizedPnl: t.realizedPnl,
       stop: initialStop,
       mae,

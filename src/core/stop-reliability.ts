@@ -15,31 +15,37 @@ const EPS = 1e-9;
  *
  * Two conditions (LONG; SHORT mirrors via the magnitudes below):
  *   - breached: `mae > stopDistance` — the worst excursion passed where a resting stop would trigger;
- *   - recovered: `mae − realizedLossPerShare > stopDistance × recoverMult` — the trade exited well
- *     above its low, so it didn't close at the breach. A genuine gap/slippage stop-out fails this
- *     (it exits AT the low, recovery ≈ 0) and therefore keeps its excess_loss flag.
+ *   - recovered: the CLOSING exit sat more than `stopDistance × recoverMult` above the adverse low,
+ *     so the trade didn't close at the breach. A genuine gap/slippage stop-out fails this (it closes
+ *     AT the low, recovery ≈ 0) and therefore keeps its excess_loss flag.
+ *
+ * `closingExit` is the price of the fill that actually CLOSED the position (the last exit), NOT the
+ * volume-weighted avgExit: a trade that scales out at a profit early and is then stopped on the rest
+ * has an avgExit well above its low, which would fake a recovery — the closing fill is what tells us
+ * whether the final shares were stopped at the low or exited higher.
  */
 export function isUnreliableStop(args: {
   direction: Trade["direction"];
   avgEntry: number;
-  avgExit: number | null;
+  closingExit: number | null;
   realizedPnl: number | null;
   stop: number | null;
   mae: number | null;
   manual: boolean;
   recoverMult: number;
 }): boolean {
-  const { direction, avgEntry, avgExit, realizedPnl, stop, mae, manual, recoverMult } = args;
-  if (manual || stop === null || mae === null || avgExit === null || realizedPnl === null) return false;
+  const { direction, avgEntry, closingExit, realizedPnl, stop, mae, manual, recoverMult } = args;
+  if (manual || stop === null || mae === null || closingExit === null || realizedPnl === null) return false;
   if (realizedPnl >= 0) return false; // losers only
 
   const stopDistance = Math.abs(avgEntry - stop);
   if (stopDistance <= EPS) return false;
 
   const breached = mae > stopDistance;
-  // Adverse move that was actually realized at exit; the rest of `mae` is what the trade gave back.
-  const realizedLossPerShare = direction === "LONG" ? avgEntry - avgExit : avgExit - avgEntry;
-  const recovery = mae - realizedLossPerShare;
+  // How adverse the CLOSING price was vs entry; the rest of `mae` is how far the close sat above the
+  // adverse low (a genuine post-breach recovery, not an early profit-taking leg inflating avgExit).
+  const adverseAtClose = direction === "LONG" ? avgEntry - closingExit : closingExit - avgEntry;
+  const recovery = mae - adverseAtClose;
   const recovered = recovery > stopDistance * recoverMult;
 
   return breached && recovered;

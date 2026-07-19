@@ -319,7 +319,11 @@ export async function rebuildDerived(
     // stop. Instead we FLAG the trade for manual input (unreliable_stop) and EXCLUDE it from the R
     // averages downstream, while keeping its per-trade R visible. Manual stops are exempt inside
     // isUnreliableStop (the user has already asserted the risk basis).
-    const liveUnreliable = isUnreliableStop({
+    // Gate on a valid loss-side risk basis: computeRisk already returns null for a profit-side or
+    // split-corrupted stop, and without a real R there's nothing to flag as "suspect" — detecting here
+    // would fire unreliable_stop AND no_stop together and claim an R that doesn't exist. So an
+    // unreliable stop always implies a non-null risk (a present-but-suspect R), never a missing one.
+    const liveUnreliable = risk !== null && isUnreliableStop({
       avgEntry: t.avgEntry,
       realizedPnl: t.realizedPnl,
       stop: initialStop,

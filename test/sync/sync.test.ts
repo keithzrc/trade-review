@@ -188,6 +188,34 @@ test("a manual stop clears the unreliable flag even during a candle outage (carr
   expect(flags).toContain("excess_loss");
 });
 
+test("a profit-side stop (no valid R) is never marked unreliable — no_stop fires, not unreliable_stop", async () => {
+  // A losing LONG whose only inferred stop sits ABOVE entry (split-corrupted / un-adjusted): computeRisk
+  // returns null (no loss-side basis). Price dips below entry mid-hold, which |avgEntry−stop| distance
+  // alone could trip — but with no real R there's nothing suspect to flag. Must fall through to no_stop.
+  const db = openTestDb();
+  const client = stubClient({
+    getHistoryFills: async () => [
+      { id: "f1", orderId: "o1", symbol: "US.AAPL", side: "BUY", qty: 100, price: 100, fee: 0, currency: "USD", time: 1000, account: "acc1" },
+      { id: "f2", orderId: "o2", symbol: "US.AAPL", side: "SELL", qty: 100, price: 98, fee: 0, currency: "USD", time: 7_200_000, account: "acc1" },
+    ],
+    getHistoryOrders: async () => [
+      // Stop trigger 102 is ABOVE the 100 entry → profit-side → risk null.
+      { id: "s1", symbol: "US.AAPL", side: "SELL", type: "STOP", qty: 100, price: null, triggerPrice: 102, status: "FILLED_ALL", createTime: 1500, updateTime: null, account: "acc1" },
+    ],
+  });
+  const candles: CandleSource = {
+    // Mid-hold bar closes at 90 — a deep move below entry, but there is no valid stop distance to breach.
+    getCandles: async () => [{ time: 1000, open: 100, high: 101, low: 90, close: 92, volume: 1 }],
+  };
+  await runSync({ db, client, candles, config: DEFAULT_RULE_CONFIG, now: 10_000 });
+  const t = allTrades(db)[0]!;
+  expect(t.risk).toBeNull(); // profit-side stop → no R basis
+  expect(t.stopUnreliable).toBe(false); // ...so nothing to flag as suspect
+  const flags = flagsForTrade(db, t.id).map((f) => f.ruleId);
+  expect(flags).toContain("no_stop");
+  expect(flags).not.toContain("unreliable_stop"); // never both
+});
+
 test("runSync snapshots account equity per currency and surfaces trade risk %", async () => {
   const db = openTestDb();
   const fundsCalls: Array<{ currency: number }> = [];

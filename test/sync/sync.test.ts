@@ -188,6 +188,33 @@ test("a manual stop clears the unreliable flag even during a candle outage (carr
   expect(flags).toContain("excess_loss");
 });
 
+test("the outage carry re-checks losers-only: a fee correction flipping a loser to a winner clears the flag", async () => {
+  // sameInputs doesn't cover fees/realizedPnl, so a fee-only correction leaves it true. The carry must
+  // still drop the flag once the trade is no longer a loser — otherwise a winner keeps a bogus
+  // unreliable_stop and loses its R from the aggregates. Small loser: gross +5, fee 10 → −5.
+  const db = openTestDb();
+  const entry = { id: "f1", orderId: "o1", symbol: "US.AAPL", side: "BUY" as const, qty: 100, price: 100, fee: 0, currency: "USD", time: 1000, account: "acc1" };
+  const exitLoser = { id: "f2", orderId: "o2", symbol: "US.AAPL", side: "SELL" as const, qty: 100, price: 100.05, fee: 10, currency: "USD", time: 7_200_000, account: "acc1" };
+  const orders = [
+    { id: "s1", symbol: "US.AAPL", side: "SELL" as const, type: "STOP" as const, qty: 100, price: null, triggerPrice: 99.8, status: "FILLED_ALL", createTime: 1500, updateTime: null, account: "acc1" },
+  ];
+  const withCandles: CandleSource = {
+    getCandles: async () => [{ time: 1000, open: 100, high: 101, low: 90, close: 98, volume: 1 }],
+  };
+  // sync 1: candles present, small loser → unreliable.
+  await runSync({ db, client: stubClient({ getHistoryFills: async () => [entry, exitLoser], getHistoryOrders: async () => orders }), candles: withCandles, config: DEFAULT_RULE_CONFIG, now: 10_000 });
+  expect(allTrades(db)[0]!.stopUnreliable).toBe(true);
+  // sync 2: candle outage, and a fee CORRECTION (same fill id, fee 10 → 0) flips gross +5 into a +5
+  // winner. avgEntry/avgExit/qty/fills are unchanged → sameInputs stays true, so only the losers-only
+  // recheck can catch this.
+  const exitWinner = { ...exitLoser, fee: 0 };
+  await runSync({ db, client: stubClient({ getHistoryFills: async () => [entry, exitWinner], getHistoryOrders: async () => orders }), candles: noCandles, config: DEFAULT_RULE_CONFIG, now: 20_000 });
+  const t = allTrades(db)[0]!;
+  expect(t.realizedPnl).toBeCloseTo(5, 5); // now a winner
+  expect(t.stopUnreliable).toBe(false); // carry dropped — not a loser anymore
+  expect(flagsForTrade(db, t.id).map((f) => f.ruleId)).not.toContain("unreliable_stop");
+});
+
 test("a profit-side stop (no valid R) is never marked unreliable — no_stop fires, not unreliable_stop", async () => {
   // A losing LONG whose only inferred stop sits ABOVE entry (split-corrupted / un-adjusted): computeRisk
   // returns null (no loss-side basis). Price dips below entry mid-hold, which |avgEntry−stop| distance

@@ -312,10 +312,13 @@ export async function rebuildDerived(
     const mae = excursion.mae ?? (sameInputs ? priorT.mae : null);
     const mfe = excursion.mfe ?? (sameInputs ? priorT.mfe : null);
 
-    // If the inferred stop can't be the trade's real initial risk (price ran past it while the trade
-    // was still open — a trailed/moved stop whose only surviving record is its final trigger), void
-    // risk/R so a fabricated 1R doesn't drive a bogus excess_loss/round_tripped_gain. The
-    // unreliable_stop flag (below) explains it. Manual stops are exempt inside isUnreliableStop.
+    // Detect an UNRELIABLE stop: price ran past the inferred initial stop while the trade was
+    // demonstrably still open (a trailed/moved stop whose only surviving record is its final
+    // trigger, reported by FUTU as if it were the initial risk). We do NOT rewrite risk/R — we
+    // can't be certain the stop was trailed vs simply blown through, and the user sets their own
+    // stop. Instead we FLAG the trade for manual input (unreliable_stop) and EXCLUDE it from the R
+    // averages downstream, while keeping its per-trade R visible. Manual stops are exempt inside
+    // isUnreliableStop (the user has already asserted the risk basis).
     const liveUnreliable = isUnreliableStop({
       avgEntry: t.avgEntry,
       realizedPnl: t.realizedPnl,
@@ -328,18 +331,17 @@ export async function rebuildDerived(
     });
 
     // The verdict needs candles; on an outage (no bars) heldMae is null → the check reads reliable.
-    // Reuse the PRIOR verdict so a previously-voided unreliable stop doesn't transiently resurface its
-    // bogus R (and excess_loss) until candles return — mirrors the mae carry. Only when NOTHING that
-    // feeds the verdict changed: same fills AND the same present stop basis (so a newly-added manual/
-    // order stop recomputes normally, not clobbered). A prior null risk with an unchanged, loss-side
-    // stop was a void for unreliability — a no-stop (null stop) or profit-side stop is excluded.
+    // Carry the PRIOR verdict so the flag (and its R-average exclusion) doesn't flicker off until
+    // candles return — mirrors the mae carry. Only when NOTHING that feeds the verdict changed: same
+    // fills AND the same present loss-side stop basis (so a newly-added manual/order stop recomputes
+    // normally, not clobbered). A no-stop (null stop) or profit-side stop is excluded.
     const initialOnProfitSide =
       initialStop !== null && (t.direction === "LONG" ? initialStop > t.avgEntry : initialStop < t.avgEntry);
     const carriedUnreliable =
       bars.length === 0 &&
       sameInputs &&
       priorT !== undefined &&
-      priorT.risk === null &&
+      priorT.stopUnreliable &&
       effectiveStop !== null &&
       priorT.effectiveStop === effectiveStop &&
       !initialOnProfitSide;
@@ -349,10 +351,11 @@ export async function rebuildDerived(
       effectiveStop,
       liveStop,
       effectiveTp: stop.effectiveTp,
-      risk: stopUnreliable ? null : risk,
-      rMultiple: stopUnreliable ? null : rMultiple,
+      risk,
+      rMultiple,
       mae,
       mfe,
+      stopUnreliable,
     };
 
     const fills = allFills.filter((f) => t.fillIds.includes(f.id));
@@ -362,7 +365,7 @@ export async function rebuildDerived(
     const recentOpens = enrichedTrades
       .filter((p) => p.account === enriched.account && p.coverageOk)
       .map((p) => p.openTime);
-    const flags = evaluate(enriched, { fills, recentClosedTrades: recent, recentOpens, stopUnreliable }, config);
+    const flags = evaluate(enriched, { fills, recentClosedTrades: recent, recentOpens }, config);
 
     enrichedTrades.push(enriched);
     if (flags.length) flagMap.set(enriched.id, flags);

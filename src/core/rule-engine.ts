@@ -150,9 +150,16 @@ export function evaluate(trade: Trade, ctx: RuleContext, config: RuleConfig): Fl
     );
   }
 
+  // A trade whose inferred stop was judged unreliable has a suspect risk basis: its risk/R are still
+  // SHOWN for transparency, but every risk/R-derived judgement flag below (excess_loss, wide_stop,
+  // oversized, round_tripped_gain) is suppressed — asserting "loss reached −10R" off a fabricated 1R
+  // would mislead. unreliable_stop fires instead, prompting the user to set a Manual stop.
+  const riskBasisTrusted = !trade.stopUnreliable;
+
   // excess_loss — realized loss deeper than the plan (gap, slippage, or a stop not honored).
   if (
     on(config, "excess_loss") &&
+    riskBasisTrusted &&
     trade.status === "closed" &&
     trade.rMultiple !== null &&
     trade.rMultiple < -config.excessLossR - EPS
@@ -166,19 +173,20 @@ export function evaluate(trade: Trade, ctx: RuleContext, config: RuleConfig): Fl
     );
   }
 
-  // unreliable_stop — sync voided risk because the inferred stop was breached yet the trade survived
-  // (price ran past it and recovered), so its trigger isn't the initial risk. Fires INSTEAD of no_stop.
-  if (on(config, "unreliable_stop") && ctx.stopUnreliable) {
+  // unreliable_stop — the inferred stop was breached yet the trade stayed open (price ran past it and
+  // recovered), so its trigger isn't the real initial risk. R stays visible but the trade is dropped
+  // from the R averages; prompt the user to set the stop they actually had so R can be trusted.
+  if (on(config, "unreliable_stop") && trade.stopUnreliable) {
     add(
       "unreliable_stop",
       "warn",
-      "Price ran past your stop while the trade stayed open — its trigger isn't your initial risk, so R is hidden.",
+      "Price ran past your stop while the trade stayed open — its trigger isn't your initial risk. Set a Manual stop for an accurate R (this trade is excluded from your R averages).",
     );
   }
 
   // no_stop — no loss-limiting stop basis (risk is null: no stop, profit-side stop, or split-corrupt).
-  // Not when the stop was voided as unreliable — that's a distinct, more specific flag (above).
-  if (on(config, "no_stop") && trade.risk === null && !ctx.stopUnreliable) {
+  // (An unreliable stop still yields a non-null risk, so it never lands here.)
+  if (on(config, "no_stop") && trade.risk === null) {
     add("no_stop", "warn", "No loss-limiting stop was found for this trade.");
   }
 
@@ -187,6 +195,7 @@ export function evaluate(trade: Trade, ctx: RuleContext, config: RuleConfig): Fl
   // guard and never fires on a profit-protecting stop.
   if (
     on(config, "wide_stop") &&
+    riskBasisTrusted &&
     trade.risk !== null &&
     trade.maxQty > EPS &&
     trade.avgEntry > EPS
@@ -221,7 +230,7 @@ export function evaluate(trade: Trade, ctx: RuleContext, config: RuleConfig): Fl
   }
 
   // oversized
-  if (on(config, "oversized") && trade.risk !== null) {
+  if (on(config, "oversized") && riskBasisTrusted && trade.risk !== null) {
     const avg = avgRecentRisk(ctx.recentClosedTrades, trade.currency);
     if (avg !== null && avg > EPS && trade.risk > config.oversizedMult * avg) {
       add(
@@ -235,6 +244,7 @@ export function evaluate(trade: Trade, ctx: RuleContext, config: RuleConfig): Fl
   // round_tripped_gain
   if (
     on(config, "round_tripped_gain") &&
+    riskBasisTrusted &&
     trade.status === "closed" &&
     trade.realizedPnl !== null &&
     trade.realizedPnl <= 0 &&

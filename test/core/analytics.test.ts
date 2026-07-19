@@ -29,6 +29,7 @@ function tr(over: Partial<Trade>): Trade {
     rMultiple: over.rMultiple ?? null,
     mae: over.mae ?? null,
     mfe: over.mfe ?? null,
+    stopUnreliable: over.stopUnreliable ?? false,
   };
 }
 
@@ -151,6 +152,29 @@ test("R split ignores trades without an R basis; payout null when a side is miss
   expect(usd.avgLossR).toBeNull(); // no losers with an R
   expect(usd.payoutRatio).toBeNull(); // can't form a ratio without a loss side
   expect(usd.breakevenWinRate).toBeNull();
+});
+
+test("stopUnreliable trades drop out of the R/risk aggregates but stay in P&L and size", () => {
+  // An unreliable-stop trade has a suspect risk basis (its fabricated −10R would poison the averages),
+  // so it's excluded from every stop-derived stat — yet it's a real closed trade, so its money still
+  // counts. Two clean trades set the trusted averages; the flagged one must not move them.
+  const s = computeStats([
+    tr({ realizedPnl: 30, rMultiple: 3, risk: 100, maxQty: 100, avgEntry: 10 }),
+    tr({ realizedPnl: -10, rMultiple: -1, risk: 100, maxQty: 100, avgEntry: 10 }),
+    tr({ realizedPnl: -200, rMultiple: -10, risk: 20, maxQty: 100, avgEntry: 10, stopUnreliable: true }),
+  ]);
+  const usd = s.byCurrency[0]!;
+  // R/risk aggregates: only the two trusted trades.
+  expect(usd.avgR).toBe(1); // (3 + −1) / 2 — the −10R is excluded
+  expect(usd.rCount).toBe(2);
+  expect(usd.avgWinR).toBe(3);
+  expect(usd.avgLossR).toBe(1); // only the trusted −1R loser
+  expect(usd.payoutRatio).toBe(3);
+  expect(usd.avgRisk).toBe(100); // (100 + 100) / 2 — the suspect $20 risk is excluded
+  // P&L / size aggregates: all three real trades count.
+  expect(usd.netPnl).toBe(-180); // 30 − 10 − 200
+  expect(usd.tradeCount).toBe(3);
+  expect(usd.avgPositionSize).toBe(1000); // 10 × 100, identical across all three
 });
 
 test("excludes open and non-coverage trades", () => {

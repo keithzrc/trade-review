@@ -317,9 +317,10 @@ export function TradeDetail({ id }: { id: string }) {
               const profitSide =
                 plannedStop != null &&
                 (t.direction === "LONG" ? plannedStop > t.avgEntry : plannedStop < t.avgEntry);
-              // R was voided because the stop couldn't be the initial risk (price ran past it and the
-              // trade survived) — a distinct reason from a seeded/profit-side stop; explain it as such.
-              const unreliable = flags.some((f) => f.ruleId === "unreliable_stop");
+              // The inferred stop was judged unreliable (price ran past it while the trade stayed open,
+              // so it isn't the real initial risk). R stays shown, but flagged suspect + excluded from
+              // the R averages — prompt a Manual stop rather than trusting this basis.
+              const unreliable = t.stopUnreliable && journal?.manualStop == null;
               return (
                 <>
                   <div>
@@ -334,13 +335,18 @@ export function TradeDetail({ id }: { id: string }) {
                         |{price(t.avgEntry, t.currency)} − {price(plannedStop, t.currency)}| × {qty(t.maxQty)} = {price(t.risk, t.currency)}
                       </div>
                     )}
+                    {unreliable && (
+                      <div className="faint" style={{ marginTop: 2 }}>
+                        ⚠ Price ran past this stop while the trade stayed open, so it isn't your initial
+                        risk (likely trailed or moved). R is still shown but excluded from your R
+                        averages — enter a Manual stop above to set the real risk basis.
+                      </div>
+                    )}
                     {plannedStop != null && t.risk === null && (
                       <div className="faint" style={{ marginTop: 2 }}>
-                        {unreliable
-                          ? "Risk not computed — price ran past this stop while the trade stayed open, so it isn't your initial risk (likely trailed or moved). Enter a Manual stop above to set the real risk basis and get your R."
-                          : profitSide
-                            ? "Risk not computed — this stop is on the profit side of entry (e.g. a split-affected or un-adjusted price)."
-                            : "Risk not computed — seeded/corporate-action trade. Enter a Manual stop above to set the risk basis and get your R."}
+                        {profitSide
+                          ? "Risk not computed — this stop is on the profit side of entry (e.g. a split-affected or un-adjusted price)."
+                          : "Risk not computed — seeded/corporate-action trade. Enter a Manual stop above to set the risk basis and get your R."}
                       </div>
                     )}
                   </div>

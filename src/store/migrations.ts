@@ -189,6 +189,13 @@ export const MIGRATIONS: ReadonlyArray<(db: Database) => void> = [
   (db) => {
     db.run(`ALTER TABLE trades ADD COLUMN realized_so_far REAL;`);
   },
+  // v11 — persist the unreliable-stop verdict: the inferred initial stop can't be the real risk basis
+  // (price ran past it while the trade was still open — a trailed stop reported by FUTU as the initial
+  // trigger). Drives the unreliable_stop flag and the R-average exclusion. Derived column: rebuilt
+  // every sync; default 0 until re-derived → reader treats it as "reliable" (safe — R stays counted).
+  (db) => {
+    db.run(`ALTER TABLE trades ADD COLUMN stop_unreliable INTEGER NOT NULL DEFAULT 0;`);
+  },
 ];
 
 export function currentVersion(db: Database): number {

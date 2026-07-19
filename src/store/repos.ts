@@ -124,11 +124,11 @@ export function replaceDerived(db: Database, trades: Trade[], flags: Map<string,
     `INSERT INTO trades
        (id, account, symbol, currency, direction, status, open_time, close_time, avg_entry,
         avg_exit, max_qty, realized_pnl, realized_so_far, fees, hold_seconds, coverage_ok,
-        effective_stop, live_stop, effective_tp, risk, r_multiple, mae, mfe)
+        effective_stop, live_stop, effective_tp, risk, r_multiple, mae, mfe, stop_unreliable)
      VALUES
        ($id, $account, $symbol, $currency, $direction, $status, $openTime, $closeTime, $avgEntry,
         $avgExit, $maxQty, $realizedPnl, $realizedSoFar, $fees, $holdSeconds, $coverageOk,
-        $effectiveStop, $liveStop, $effectiveTp, $risk, $rMultiple, $mae, $mfe)`,
+        $effectiveStop, $liveStop, $effectiveTp, $risk, $rMultiple, $mae, $mfe, $stopUnreliable)`,
   );
   const insLink = db.prepare(`INSERT INTO trade_fills (trade_id, fill_id) VALUES ($t, $f)`);
   const insFlag = db.prepare(
@@ -148,6 +148,7 @@ export function replaceDerived(db: Database, trades: Trade[], flags: Map<string,
         $fees: t.fees, $holdSeconds: t.holdSeconds, $coverageOk: t.coverageOk ? 1 : 0,
         $effectiveStop: t.effectiveStop, $liveStop: t.liveStop, $effectiveTp: t.effectiveTp, $risk: t.risk,
         $rMultiple: t.rMultiple, $mae: t.mae, $mfe: t.mfe,
+        $stopUnreliable: t.stopUnreliable ? 1 : 0,
       });
       for (const fid of t.fillIds) insLink.run({ $t: t.id, $f: fid });
       for (const fl of flags.get(t.id) ?? []) {
@@ -177,6 +178,7 @@ export function allTrades(db: Database): Trade[] {
     fillIds: byTrade.get(r.id) ?? [],
     effectiveStop: r.effective_stop, liveStop: r.live_stop, effectiveTp: r.effective_tp, risk: r.risk,
     rMultiple: r.r_multiple, mae: r.mae, mfe: r.mfe,
+    stopUnreliable: r.stop_unreliable === 1,
   }));
 }
 

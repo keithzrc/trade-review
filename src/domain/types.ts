@@ -83,6 +83,11 @@ export interface Trade {
   rMultiple: number | null;
   mae: number | null;
   mfe: number | null;
+  // True when the inferred initial stop can't be the real risk basis (price ran past it while the
+  // trade was demonstrably still open — a trailed/moved stop reported by FUTU as the initial trigger).
+  // R stays VISIBLE per-trade, but the trade is flagged (unreliable_stop) for manual input and
+  // EXCLUDED from the R averages. Derived + stored; rebuilt every sync. See sync.ts / stop-reliability.
+  stopUnreliable: boolean;
 }
 
 /** FUTU order type (normalized). Stop/stop-limit/trailing are protective-stop candidates. */
@@ -182,10 +187,6 @@ export interface RuleContext {
   // opens in a rolling window regardless of whether those trades have closed (a swing trader holds
   // many positions open at once, so closed-before-open would never catch the churn). Undefined = none.
   recentOpens?: number[];
-  // Set by sync when the trade's inferred stop was judged not the real initial risk (price ran past
-  // it yet the trade survived) — sync has already voided risk/R, so the engine fires unreliable_stop
-  // and suppresses no_stop. See core/stop-reliability.ts.
-  stopUnreliable?: boolean;
 }
 
 /** Per-currency aggregate stats (P&L is never summed across currencies). */

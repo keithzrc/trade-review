@@ -67,7 +67,7 @@ test("runSync enriches stop/risk from orders and MAE/MFE from candles", async ()
   expect(t.mfe).toBe(3);
 });
 
-test("runSync voids R and flags unreliable_stop when price ran past the stop mid-hold and the trade survived", async () => {
+test("runSync flags unreliable_stop (R kept visible, suppresses R-based flags) when price ran past the stop mid-hold and the trade survived", async () => {
   // AMD shape: tiny inferred stop (0.2 below entry); price fell to 90 in a bar that CLOSED during the
   // hold (a survived breach), then the trade exited later at 98. heldMae 10 ≫ the 0.2 stop → unreliable.
   const db = openTestDb();
@@ -87,12 +87,13 @@ test("runSync voids R and flags unreliable_stop when price ran past the stop mid
   await runSync({ db, client, candles, config: DEFAULT_RULE_CONFIG, now: 10_000 });
   const t = allTrades(db)[0]!;
   expect(t.effectiveStop).toBe(99.8); // the stop is still recorded/drawn
-  expect(t.risk).toBeNull(); // ...but not trusted as 1R
-  expect(t.rMultiple).toBeNull(); // so no fabricated −10R
+  expect(t.risk).toBeCloseTo(20, 5); // |100-99.8| * 100 — still computed and shown per-trade
+  expect(t.rMultiple).toBeCloseTo(-10, 5); // −200 / 20 — visible, but flagged suspect
+  expect(t.stopUnreliable).toBe(true); // drives the flag + the R-average exclusion downstream
   const flags = flagsForTrade(db, t.id).map((f) => f.ruleId);
   expect(flags).toContain("unreliable_stop");
-  expect(flags).not.toContain("no_stop"); // suppressed in favour of the specific flag
-  expect(flags).not.toContain("excess_loss"); // R-based flag can't fire without R
+  expect(flags).not.toContain("no_stop"); // risk is non-null, so no_stop never applies
+  expect(flags).not.toContain("excess_loss"); // suppressed: the −10R risk basis isn't trusted
 });
 
 test("runSync keeps R/excess_loss for a stop-out (incl. split-fill) whose low is in the EXIT bar", async () => {
@@ -126,7 +127,7 @@ test("runSync keeps R/excess_loss for a stop-out (incl. split-fill) whose low is
   expect(flags).not.toContain("unreliable_stop");
 });
 
-test("runSync carries the unreliable-stop void across a candle outage (no transient R resurfacing)", async () => {
+test("runSync carries the unreliable-stop flag across a candle outage (no transient flag flicker)", async () => {
   const db = openTestDb();
   const fills = [
     { id: "f1", orderId: "o1", symbol: "US.AAPL", side: "BUY" as const, qty: 100, price: 100, fee: 0, currency: "USD", time: 1000, account: "acc1" },
@@ -138,15 +139,15 @@ test("runSync carries the unreliable-stop void across a candle outage (no transi
   const withCandles: CandleSource = {
     getCandles: async () => [{ time: 1000, open: 100, high: 101, low: 90, close: 98, volume: 1 }],
   };
-  // sync 1: candles present → stop judged unreliable, R voided.
+  // sync 1: candles present → stop judged unreliable (R stays visible, but flagged).
   await runSync({ db, client: stubClient({ getHistoryFills: async () => fills, getHistoryOrders: async () => orders }), candles: withCandles, config: DEFAULT_RULE_CONFIG, now: 10_000 });
-  expect(allTrades(db)[0]!.risk).toBeNull();
-  // sync 2: candle outage (no bars) on the unchanged trade → the void (and its flag) must persist,
-  // not flip back to a bogus −10R + excess_loss until candles return.
+  expect(allTrades(db)[0]!.stopUnreliable).toBe(true);
+  // sync 2: candle outage (no bars) on the unchanged trade → the flag (and its R-average exclusion)
+  // must persist, not flicker off until candles return. R remains visible throughout.
   await runSync({ db, client: stubClient({ getHistoryFills: async () => fills, getHistoryOrders: async () => orders }), candles: noCandles, config: DEFAULT_RULE_CONFIG, now: 20_000 });
   const t = allTrades(db)[0]!;
-  expect(t.risk).toBeNull();
-  expect(t.rMultiple).toBeNull();
+  expect(t.stopUnreliable).toBe(true);
+  expect(t.risk).toBeCloseTo(20, 5); // still shown, not nulled by the outage
   const flags = flagsForTrade(db, t.id).map((f) => f.ruleId);
   expect(flags).toContain("unreliable_stop");
   expect(flags).not.toContain("no_stop");

@@ -9,6 +9,7 @@ function ctx(over: Partial<RuleContext> = {}): RuleContext {
     fills: over.fills ?? [],
     recentClosedTrades: over.recentClosedTrades ?? [],
     recentOpens: over.recentOpens,
+    stopUnreliable: over.stopUnreliable,
   };
 }
 function ids(flags: { ruleId: string }[]): string[] {
@@ -86,6 +87,27 @@ test("no_stop: a trade with no risk basis (no loss-limiting stop) fires", () => 
 test("no_stop: a trade with a loss-limiting stop does NOT fire", () => {
   const trade = { ...base(), risk: 100 };
   expect(ids(evaluate(trade, ctx(), DEFAULT_RULE_CONFIG))).not.toContain("no_stop");
+});
+
+test("unreliable_stop: fires when sync flags the stop unreliable (risk voided)", () => {
+  // Sync voided risk/R for an unreliable stop; the engine surfaces the dedicated flag.
+  const trade = { ...base(), risk: null, rMultiple: null };
+  const flags = ids(evaluate(trade, ctx({ stopUnreliable: true }), DEFAULT_RULE_CONFIG));
+  expect(flags).toContain("unreliable_stop");
+});
+
+test("unreliable_stop suppresses no_stop — they're mutually exclusive", () => {
+  const trade = { ...base(), risk: null, rMultiple: null };
+  const flags = ids(evaluate(trade, ctx({ stopUnreliable: true }), DEFAULT_RULE_CONFIG));
+  expect(flags).not.toContain("no_stop");
+});
+
+test("voiding risk for an unreliable stop drops the R/risk-dependent flags", () => {
+  // A would-be excess_loss (−10R) shape, but risk is voided → no R-based flag, only the caveat.
+  const trade = { ...base(), realizedPnl: -1124, risk: null, rMultiple: null };
+  const flags = ids(evaluate(trade, ctx({ stopUnreliable: true }), DEFAULT_RULE_CONFIG));
+  expect(flags).not.toContain("excess_loss");
+  expect(flags).not.toContain("round_tripped_gain");
 });
 
 test("wide_stop: a stop wider than 8% of entry fires", () => {

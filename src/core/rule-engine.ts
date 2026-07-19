@@ -166,8 +166,19 @@ export function evaluate(trade: Trade, ctx: RuleContext, config: RuleConfig): Fl
     );
   }
 
+  // unreliable_stop — sync voided risk because the inferred stop was breached yet the trade survived
+  // (price ran past it and recovered), so its trigger isn't the initial risk. Fires INSTEAD of no_stop.
+  if (on(config, "unreliable_stop") && ctx.stopUnreliable) {
+    add(
+      "unreliable_stop",
+      "warn",
+      "Price ran past your stop while the trade stayed open — its trigger isn't your initial risk, so R is hidden.",
+    );
+  }
+
   // no_stop — no loss-limiting stop basis (risk is null: no stop, profit-side stop, or split-corrupt).
-  if (on(config, "no_stop") && trade.risk === null) {
+  // Not when the stop was voided as unreliable — that's a distinct, more specific flag (above).
+  if (on(config, "no_stop") && trade.risk === null && !ctx.stopUnreliable) {
     add("no_stop", "warn", "No loss-limiting stop was found for this trade.");
   }
 

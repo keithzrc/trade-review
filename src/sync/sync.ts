@@ -15,6 +15,7 @@ import type {
 import { buildTrades } from "../core/trade-builder";
 import { inferStops } from "../core/stop-inference";
 import { computeRisk } from "../core/risk";
+import { isUnreliableStop } from "../core/stop-reliability";
 import { computeExcursion } from "../core/mae-mfe";
 import { evaluate } from "../core/rule-engine";
 import { currencyEnumFor, currencyForMarket, knownMarket, marketName, TRD_ENV_REAL } from "../futu/map";
@@ -311,13 +312,28 @@ export async function rebuildDerived(
     const mae = excursion.mae ?? (sameInputs ? priorT.mae : null);
     const mfe = excursion.mfe ?? (sameInputs ? priorT.mfe : null);
 
+    // If the inferred stop can't be the trade's real initial risk (price ran past it yet the trade
+    // survived — a trailed/moved stop whose only surviving record is its final trigger), void risk/R
+    // so a fabricated 1R doesn't drive a bogus excess_loss/round_tripped_gain. The unreliable_stop
+    // flag (below) explains it. Manual stops are exempt inside isUnreliableStop.
+    const stopUnreliable = isUnreliableStop({
+      direction: t.direction,
+      avgEntry: t.avgEntry,
+      avgExit: t.avgExit,
+      realizedPnl: t.realizedPnl,
+      stop: initialStop,
+      mae,
+      manual: ms != null,
+      recoverMult: config.unreliableStopRecoverR,
+    });
+
     const enriched: Trade = {
       ...t,
       effectiveStop,
       liveStop,
       effectiveTp: stop.effectiveTp,
-      risk,
-      rMultiple,
+      risk: stopUnreliable ? null : risk,
+      rMultiple: stopUnreliable ? null : rMultiple,
       mae,
       mfe,
     };
@@ -329,7 +345,7 @@ export async function rebuildDerived(
     const recentOpens = enrichedTrades
       .filter((p) => p.account === enriched.account && p.coverageOk)
       .map((p) => p.openTime);
-    const flags = evaluate(enriched, { fills, recentClosedTrades: recent, recentOpens }, config);
+    const flags = evaluate(enriched, { fills, recentClosedTrades: recent, recentOpens, stopUnreliable }, config);
 
     enrichedTrades.push(enriched);
     if (flags.length) flagMap.set(enriched.id, flags);

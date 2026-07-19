@@ -153,6 +153,9 @@ export interface RuleConfig {
   pyramidExtendedPct: number; // flag a pyramid add priced above first entry by more than this (default 0.05)
   overtradeWindowDays: number; // window for the overtrading-frequency count (default 1 day)
   overtradeMaxOpens: number; // flag when opens within the window exceed this count (default 3)
+  // unreliable_stop: a losing trade's price ran past its inferred stop by more than this many
+  // stop-widths back from its low (i.e. it recovered, so the stop wasn't the resting initial one).
+  unreliableStopRecoverR: number; // default 1
   enabled: Record<string, boolean>; // ruleId → enabled; missing key = enabled
 }
 
@@ -166,6 +169,7 @@ export const DEFAULT_RULE_CONFIG: RuleConfig = {
   pyramidExtendedPct: 0.05,
   overtradeWindowDays: 1,
   overtradeMaxOpens: 3,
+  unreliableStopRecoverR: 1,
   enabled: {},
 };
 
@@ -178,6 +182,10 @@ export interface RuleContext {
   // opens in a rolling window regardless of whether those trades have closed (a swing trader holds
   // many positions open at once, so closed-before-open would never catch the churn). Undefined = none.
   recentOpens?: number[];
+  // Set by sync when the trade's inferred stop was judged not the real initial risk (price ran past
+  // it yet the trade survived) — sync has already voided risk/R, so the engine fires unreliable_stop
+  // and suppresses no_stop. See core/stop-reliability.ts.
+  stopUnreliable?: boolean;
 }
 
 /** Per-currency aggregate stats (P&L is never summed across currencies). */

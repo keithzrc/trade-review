@@ -67,6 +67,33 @@ test("runSync enriches stop/risk from orders and MAE/MFE from candles", async ()
   expect(t.mfe).toBe(3);
 });
 
+test("runSync voids R and flags unreliable_stop when price ran past the stop but the trade survived", async () => {
+  // AMD shape: tiny inferred stop (0.2 below entry), deep MAE (to 90), then recovered to exit at 98.
+  const db = openTestDb();
+  const client = stubClient({
+    getHistoryFills: async () => [
+      { id: "f1", orderId: "o1", symbol: "US.AAPL", side: "BUY", qty: 100, price: 100, fee: 0, currency: "USD", time: 1000, account: "acc1" },
+      { id: "f2", orderId: "o2", symbol: "US.AAPL", side: "SELL", qty: 100, price: 98, fee: 0, currency: "USD", time: 7_200_000, account: "acc1" },
+    ],
+    getHistoryOrders: async () => [
+      { id: "s1", symbol: "US.AAPL", side: "SELL", type: "STOP", qty: 100, price: null, triggerPrice: 99.8, status: "FILLED_ALL", createTime: 1500, updateTime: null, account: "acc1" },
+    ],
+  });
+  const candles: CandleSource = {
+    // 1h bar fully inside the hold; low 90 → mae 10 (breached the 0.2-wide stop), exit 98 recovered ~8.
+    getCandles: async (): Promise<Candle[]> => [{ time: 1000, open: 100, high: 101, low: 90, close: 98, volume: 1 }],
+  };
+  await runSync({ db, client, candles, config: DEFAULT_RULE_CONFIG, now: 10_000 });
+  const t = allTrades(db)[0]!;
+  expect(t.effectiveStop).toBe(99.8); // the stop is still recorded/drawn
+  expect(t.risk).toBeNull(); // ...but not trusted as 1R
+  expect(t.rMultiple).toBeNull(); // so no fabricated −10R
+  const flags = flagsForTrade(db, t.id).map((f) => f.ruleId);
+  expect(flags).toContain("unreliable_stop");
+  expect(flags).not.toContain("no_stop"); // suppressed in favour of the specific flag
+  expect(flags).not.toContain("excess_loss"); // R-based flag can't fire without R
+});
+
 test("runSync snapshots account equity per currency and surfaces trade risk %", async () => {
   const db = openTestDb();
   const fundsCalls: Array<{ currency: number }> = [];

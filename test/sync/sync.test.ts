@@ -82,8 +82,9 @@ test("runSync flags unreliable_stop (R kept visible, suppresses R-based flags) w
     ],
   });
   const candles: CandleSource = {
-    // 1h bar [1000, 3.6M) closes inside the 2h hold → its low 90 is a mid-hold breach of the 99.8 stop.
-    getCandles: async (): Promise<Candle[]> => [{ time: 1000, open: 100, high: 101, low: 90, close: 98, volume: 1 }],
+    // Fill-free 1h bar [3.6M, 7.2M) closes inside the 2h hold (entry@1000, exit@7.2M are in other
+    // bars) → its low 90 is a clean mid-hold breach of the 99.8 stop.
+    getCandles: async (): Promise<Candle[]> => [{ time: 3_600_000, open: 100, high: 101, low: 90, close: 98, volume: 1 }],
   };
   await runSync({ db, client, candles, config: DEFAULT_RULE_CONFIG, now: 10_000 });
   const t = allTrades(db)[0]!;
@@ -138,7 +139,7 @@ test("runSync carries the unreliable-stop flag across a candle outage (no transi
     { id: "s1", symbol: "US.AAPL", side: "SELL" as const, type: "STOP" as const, qty: 100, price: null, triggerPrice: 99.8, status: "FILLED_ALL", createTime: 1500, updateTime: null, account: "acc1" },
   ];
   const withCandles: CandleSource = {
-    getCandles: async () => [{ time: 1000, open: 100, high: 101, low: 90, close: 98, volume: 1 }],
+    getCandles: async () => [{ time: 3_600_000, open: 100, high: 101, low: 90, close: 98, volume: 1 }],
   };
   // sync 1: candles present → stop judged unreliable (R stays visible, but flagged).
   await runSync({ db, client: stubClient({ getHistoryFills: async () => fills, getHistoryOrders: async () => orders }), candles: withCandles, config: DEFAULT_RULE_CONFIG, now: 10_000 });
@@ -165,7 +166,7 @@ test("a manual stop clears the unreliable flag even during a candle outage (carr
     { id: "s1", symbol: "US.AAPL", side: "SELL" as const, type: "STOP" as const, qty: 100, price: null, triggerPrice: 99.8, status: "FILLED_ALL", createTime: 1500, updateTime: null, account: "acc1" },
   ];
   const withCandles: CandleSource = {
-    getCandles: async () => [{ time: 1000, open: 100, high: 101, low: 90, close: 98, volume: 1 }],
+    getCandles: async () => [{ time: 3_600_000, open: 100, high: 101, low: 90, close: 98, volume: 1 }],
   };
   // sync 1: candles present → unreliable.
   const client = stubClient({ getHistoryFills: async () => fills, getHistoryOrders: async () => orders });
@@ -199,7 +200,7 @@ test("the outage carry re-checks losers-only: a fee correction flipping a loser 
     { id: "s1", symbol: "US.AAPL", side: "SELL" as const, type: "STOP" as const, qty: 100, price: null, triggerPrice: 99.8, status: "FILLED_ALL", createTime: 1500, updateTime: null, account: "acc1" },
   ];
   const withCandles: CandleSource = {
-    getCandles: async () => [{ time: 1000, open: 100, high: 101, low: 90, close: 98, volume: 1 }],
+    getCandles: async () => [{ time: 3_600_000, open: 100, high: 101, low: 90, close: 98, volume: 1 }],
   };
   // sync 1: candles present, small loser → unreliable.
   await runSync({ db, client: stubClient({ getHistoryFills: async () => [entry, exitLoser], getHistoryOrders: async () => orders }), candles: withCandles, config: DEFAULT_RULE_CONFIG, now: 10_000 });
@@ -232,7 +233,7 @@ test("a profit-side stop (no valid R) is never marked unreliable — no_stop fir
   });
   const candles: CandleSource = {
     // Mid-hold bar closes at 90 — a deep move below entry, but there is no valid stop distance to breach.
-    getCandles: async () => [{ time: 1000, open: 100, high: 101, low: 90, close: 92, volume: 1 }],
+    getCandles: async () => [{ time: 3_600_000, open: 100, high: 101, low: 90, close: 92, volume: 1 }],
   };
   await runSync({ db, client, candles, config: DEFAULT_RULE_CONFIG, now: 10_000 });
   const t = allTrades(db)[0]!;
@@ -258,7 +259,7 @@ test("a STOP_LIMIT initial stop is never marked unreliable — a gap-through is 
     ],
   });
   const candles: CandleSource = {
-    getCandles: async () => [{ time: 1000, open: 100, high: 101, low: 90, close: 98, volume: 1 }],
+    getCandles: async () => [{ time: 3_600_000, open: 100, high: 101, low: 90, close: 98, volume: 1 }],
   };
   await runSync({ db, client, candles, config: DEFAULT_RULE_CONFIG, now: 10_000 });
   const t = allTrades(db)[0]!;

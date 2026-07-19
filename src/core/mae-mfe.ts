@@ -11,14 +11,28 @@ function fullyInsideBars(trade: Trade, candles: Candle[], resolution: number): C
 
 /**
  * Worst ADVERSE excursion (per share, >= 0) reached in a bar that closed DURING the hold — i.e. from
- * a fully-inside bar, EXCLUDING the fills and the entry/exit boundary bars. Distinct from
- * `computeExcursion`'s `mae` (which folds in the exit fill): this answers "how far did price go
- * against the trade while it was demonstrably still open?", used to tell a trade that SURVIVED a
- * breach of its stop (adverse low in a mid-hold bar) from one that closed AT the breach (adverse low
- * in the excluded exit bar). null when no bar closed inside the hold (too short, or a candle outage).
+ * a fully-inside bar in which NO fill of the trade executed. Distinct from `computeExcursion`'s `mae`
+ * (which folds in the exit fill): this answers "how far did price go against the trade while it was
+ * demonstrably still open and NOT trading?", used to tell a trade that SURVIVED a breach of its stop
+ * (adverse low in a clean mid-hold bar) from one that closed AT the breach.
+ *
+ * Excluding EVERY bar that contains a fill (not just the closeTime bar) is what makes this correct for
+ * a split/scaled exit: a genuine stop-out can liquidate across two bars straddling a candle boundary,
+ * and the EARLIER closing fill's bar is still fully inside [openTime, closeTime) — counting its
+ * stop-out low would fake a survived breach and wrongly flag the stop unreliable. A bar with any fill
+ * is an execution bar; only fill-free mid-hold bars are unambiguously "held, not trading".
+ *
+ * null when no such clean mid-hold bar exists (too short, all inside bars held a fill, or an outage).
  */
-export function heldAdverseExcursion(trade: Trade, candles: Candle[], resolution: number): number | null {
-  const inside = fullyInsideBars(trade, candles, resolution);
+export function heldAdverseExcursion(
+  trade: Trade,
+  fills: RawFill[],
+  candles: Candle[],
+  resolution: number,
+): number | null {
+  const inside = fullyInsideBars(trade, candles, resolution).filter(
+    (c) => !fills.some((f) => f.time >= c.time && f.time < c.time + resolution),
+  );
   if (inside.length === 0) return null;
   if (trade.direction === "LONG") {
     const lo = Math.min(...inside.map((c) => c.low));

@@ -345,7 +345,7 @@ export async function rebuildDerived(
       stop: initialStop,
       // Mid-hold adverse excursion (bars that closed DURING the hold, excluding the exit bar/fills):
       // a genuine stop-out's low lives in the exit bar, so a split/gap stop can't fake a breach here.
-      heldMae: heldAdverseExcursion(t, bars, resMs),
+      heldMae: heldAdverseExcursion(t, tradeFills, bars, resMs),
       manual: ms != null,
       recoverMult: config.unreliableStopRecoverR,
     });

@@ -120,29 +120,46 @@ test("open trade uses all candles from openTime onward", () => {
 });
 
 // heldAdverseExcursion — the mid-hold adverse move used to detect a survived stop breach. Only bars
-// that closed DURING the hold count (fills and the entry/exit boundary bars are excluded).
+// that closed DURING the hold AND contain no fill count (fills and the entry/exit boundary bars are
+// excluded).
 
-test("heldAdverseExcursion (long): worst low among fully-inside bars, vs entry", () => {
-  const { trade: t } = longTrade(); // entry 10, window [60000, 180000)
-  expect(heldAdverseExcursion(t, [candle(120_000, 7, 11)], RES)).toBe(3); // 10 - 7
+test("heldAdverseExcursion (long): worst low among fill-free fully-inside bars, vs entry", () => {
+  const { trade: t, fills } = longTrade(); // entry 10, window [60000, 180000)
+  expect(heldAdverseExcursion(t, fills, [candle(120_000, 7, 11)], RES)).toBe(3); // 10 - 7
 });
 
 test("heldAdverseExcursion excludes the exit bar — a stop-out low there does NOT count", () => {
-  const { trade: t } = longTrade(); // closes at 180000
+  const { trade: t, fills } = longTrade(); // closes at 180000
   // A deep low that lives in the straddling exit bar (start 150000) must be ignored → no inside bar.
-  expect(heldAdverseExcursion(t, [candle(150_000, 1, 100)], RES)).toBeNull();
+  expect(heldAdverseExcursion(t, fills, [candle(150_000, 1, 100)], RES)).toBeNull();
 });
 
-test("heldAdverseExcursion (short): worst high among fully-inside bars, vs entry", () => {
-  const short = buildTrades([
+test("heldAdverseExcursion excludes a bar holding an EARLIER split-exit fill (straddling boundary)", () => {
+  // A genuine stop-out liquidates across two bars: 50 @ 8 at t=120000 (bar [120000,180000)) and the
+  // rest 50 @ 8 at t=180000. closeTime is the LAST fill (240000 window end here), so the 120000 bar is
+  // fully inside — but it holds a closing fill, so its stop-out low (8) must NOT count as a survived
+  // breach. Without the fill-in-bar exclusion this would return 2 and wrongly flag the stop unreliable.
+  const fills = [
+    fill("BUY", 100, 10, { time: 60_000 }),
+    fill("SELL", 50, 8, { time: 120_000 }),
+    fill("SELL", 50, 8, { time: 180_000 }),
+  ];
+  const t = buildTrades(fills)[0]!; // window [60000, 180000)
+  // Only the 120000 bar is fully inside, and it holds the first stop fill → excluded → null.
+  expect(heldAdverseExcursion(t, fills, [candle(120_000, 8, 11)], RES)).toBeNull();
+});
+
+test("heldAdverseExcursion (short): worst high among fill-free fully-inside bars, vs entry", () => {
+  const shortFills = [
     fill("SELL", 100, 20, { time: 60_000 }),
     fill("BUY", 100, 21, { time: 180_000 }),
-  ])[0]!;
-  expect(heldAdverseExcursion(short, [candle(120_000, 19, 26)], RES)).toBe(6); // 26 - 20
+  ];
+  const short = buildTrades(shortFills)[0]!;
+  expect(heldAdverseExcursion(short, shortFills, [candle(120_000, 19, 26)], RES)).toBe(6); // 26 - 20
 });
 
 test("heldAdverseExcursion clamps to >= 0 and is null with no fully-inside bar", () => {
-  const { trade: t } = longTrade();
-  expect(heldAdverseExcursion(t, [candle(120_000, 11, 12)], RES)).toBe(0); // never went below entry
-  expect(heldAdverseExcursion(t, [], RES)).toBeNull(); // outage / too short
+  const { trade: t, fills } = longTrade();
+  expect(heldAdverseExcursion(t, fills, [candle(120_000, 11, 12)], RES)).toBe(0); // never went below entry
+  expect(heldAdverseExcursion(t, fills, [], RES)).toBeNull(); // outage / too short
 });

@@ -67,8 +67,9 @@ test("runSync enriches stop/risk from orders and MAE/MFE from candles", async ()
   expect(t.mfe).toBe(3);
 });
 
-test("runSync voids R and flags unreliable_stop when price ran past the stop but the trade survived", async () => {
-  // AMD shape: tiny inferred stop (0.2 below entry), deep MAE (to 90), then recovered to exit at 98.
+test("runSync voids R and flags unreliable_stop when price ran past the stop mid-hold and the trade survived", async () => {
+  // AMD shape: tiny inferred stop (0.2 below entry); price fell to 90 in a bar that CLOSED during the
+  // hold (a survived breach), then the trade exited later at 98. heldMae 10 ≫ the 0.2 stop → unreliable.
   const db = openTestDb();
   const client = stubClient({
     getHistoryFills: async () => [
@@ -80,7 +81,7 @@ test("runSync voids R and flags unreliable_stop when price ran past the stop but
     ],
   });
   const candles: CandleSource = {
-    // 1h bar fully inside the hold; low 90 → mae 10 (breached the 0.2-wide stop), exit 98 recovered ~8.
+    // 1h bar [1000, 3.6M) closes inside the 2h hold → its low 90 is a mid-hold breach of the 99.8 stop.
     getCandles: async (): Promise<Candle[]> => [{ time: 1000, open: 100, high: 101, low: 90, close: 98, volume: 1 }],
   };
   await runSync({ db, client, candles, config: DEFAULT_RULE_CONFIG, now: 10_000 });
@@ -94,54 +95,62 @@ test("runSync voids R and flags unreliable_stop when price ran past the stop but
   expect(flags).not.toContain("excess_loss"); // R-based flag can't fire without R
 });
 
-test("runSync keeps R/excess_loss for a scale-out-then-stopped loss (closing fill, not avgExit)", async () => {
-  // Sold half at a profit early, then stopped on the rest at the low. avgExit (97) would fake a
-  // recovery and wrongly void this legit −1.5R stop-out; the closing fill (84) is at the low → kept.
+test("runSync keeps R/excess_loss for a stop-out (incl. split-fill) whose low is in the EXIT bar", async () => {
+  // The stop fires at the end and liquidates in two prints (90 then 97). The adverse low lives in the
+  // EXIT bar; the only mid-hold bar never breached the stop → heldMae stays shallow → R is kept. This
+  // is the case exit-price comparisons misread (the 97 print looks like a recovery) but timing doesn't.
   const db = openTestDb();
   const client = stubClient({
     getHistoryFills: async () => [
       { id: "f1", orderId: "o1", symbol: "US.AAPL", side: "BUY", qty: 100, price: 100, fee: 0, currency: "USD", time: 1000, account: "acc1" },
-      { id: "f2", orderId: "o2", symbol: "US.AAPL", side: "SELL", qty: 50, price: 110, fee: 0, currency: "USD", time: 1_800_000, account: "acc1" },
-      { id: "f3", orderId: "o3", symbol: "US.AAPL", side: "SELL", qty: 50, price: 84, fee: 0, currency: "USD", time: 7_200_000, account: "acc1" },
+      { id: "f2", orderId: "s1", symbol: "US.AAPL", side: "SELL", qty: 50, price: 90, fee: 0, currency: "USD", time: 7_200_000, account: "acc1" },
+      { id: "f3", orderId: "s1", symbol: "US.AAPL", side: "SELL", qty: 50, price: 97, fee: 0, currency: "USD", time: 7_200_001, account: "acc1" },
     ],
     getHistoryOrders: async () => [
       { id: "s1", symbol: "US.AAPL", side: "SELL", type: "STOP", qty: 100, price: null, triggerPrice: 98, status: "FILLED_ALL", createTime: 1500, updateTime: null, account: "acc1" },
     ],
   });
   const candles: CandleSource = {
-    getCandles: async (): Promise<Candle[]> => [{ time: 1000, open: 100, high: 111, low: 84, close: 84, volume: 1 }],
+    // Mid-hold bar (low 99, no breach of the 98 stop); the drop to 90 is in the straddling exit bar.
+    getCandles: async (): Promise<Candle[]> => [
+      { time: 1000, open: 100, high: 101, low: 99, close: 100, volume: 1 },
+      { time: 7_200_000, open: 97, high: 97, low: 90, close: 97, volume: 1 },
+    ],
   };
   await runSync({ db, client, candles, config: DEFAULT_RULE_CONFIG, now: 10_000 });
   const t = allTrades(db)[0]!;
   expect(t.risk).toBe(200); // |100-98| * 100 — NOT voided
-  expect(t.rMultiple).toBeCloseTo(-1.5, 5); // pnl -300 / 200
+  expect(t.rMultiple).toBeCloseTo(-3.25, 5); // pnl (4500+4850-10000) = -650 / 200
   const flags = flagsForTrade(db, t.id).map((f) => f.ruleId);
   expect(flags).toContain("excess_loss");
   expect(flags).not.toContain("unreliable_stop");
 });
 
-test("runSync picks the flattening fill among same-timestamp exits (closing-fill tie-break)", async () => {
-  // Two exits at the SAME instant: a partial at 110 (id f2) and the flattening stop at 84 (id f3).
-  // The closing fill must be f3 (84, the low) — matching buildTrades' (time,id) order — not f2, which
-  // would fake a recovery and wrongly void this real −1.5R stop-out.
+test("runSync carries the unreliable-stop void across a candle outage (no transient R resurfacing)", async () => {
   const db = openTestDb();
-  const client = stubClient({
-    getHistoryFills: async () => [
-      { id: "f1", orderId: "o1", symbol: "US.AAPL", side: "BUY", qty: 100, price: 100, fee: 0, currency: "USD", time: 1000, account: "acc1" },
-      { id: "f2", orderId: "o2", symbol: "US.AAPL", side: "SELL", qty: 50, price: 110, fee: 0, currency: "USD", time: 7_200_000, account: "acc1" },
-      { id: "f3", orderId: "o3", symbol: "US.AAPL", side: "SELL", qty: 50, price: 84, fee: 0, currency: "USD", time: 7_200_000, account: "acc1" },
-    ],
-    getHistoryOrders: async () => [
-      { id: "s1", symbol: "US.AAPL", side: "SELL", type: "STOP", qty: 100, price: null, triggerPrice: 98, status: "FILLED_ALL", createTime: 1500, updateTime: null, account: "acc1" },
-    ],
-  });
-  const candles: CandleSource = {
-    getCandles: async (): Promise<Candle[]> => [{ time: 1000, open: 100, high: 111, low: 84, close: 84, volume: 1 }],
+  const fills = [
+    { id: "f1", orderId: "o1", symbol: "US.AAPL", side: "BUY" as const, qty: 100, price: 100, fee: 0, currency: "USD", time: 1000, account: "acc1" },
+    { id: "f2", orderId: "o2", symbol: "US.AAPL", side: "SELL" as const, qty: 100, price: 98, fee: 0, currency: "USD", time: 7_200_000, account: "acc1" },
+  ];
+  const orders = [
+    { id: "s1", symbol: "US.AAPL", side: "SELL" as const, type: "STOP" as const, qty: 100, price: null, triggerPrice: 99.8, status: "FILLED_ALL", createTime: 1500, updateTime: null, account: "acc1" },
+  ];
+  const withCandles: CandleSource = {
+    getCandles: async () => [{ time: 1000, open: 100, high: 101, low: 90, close: 98, volume: 1 }],
   };
-  await runSync({ db, client, candles, config: DEFAULT_RULE_CONFIG, now: 10_000 });
+  // sync 1: candles present → stop judged unreliable, R voided.
+  await runSync({ db, client: stubClient({ getHistoryFills: async () => fills, getHistoryOrders: async () => orders }), candles: withCandles, config: DEFAULT_RULE_CONFIG, now: 10_000 });
+  expect(allTrades(db)[0]!.risk).toBeNull();
+  // sync 2: candle outage (no bars) on the unchanged trade → the void (and its flag) must persist,
+  // not flip back to a bogus −10R + excess_loss until candles return.
+  await runSync({ db, client: stubClient({ getHistoryFills: async () => fills, getHistoryOrders: async () => orders }), candles: noCandles, config: DEFAULT_RULE_CONFIG, now: 20_000 });
   const t = allTrades(db)[0]!;
-  expect(t.rMultiple).toBeCloseTo(-1.5, 5); // NOT voided by a mis-picked closing fill
-  expect(flagsForTrade(db, t.id).map((f) => f.ruleId)).not.toContain("unreliable_stop");
+  expect(t.risk).toBeNull();
+  expect(t.rMultiple).toBeNull();
+  const flags = flagsForTrade(db, t.id).map((f) => f.ruleId);
+  expect(flags).toContain("unreliable_stop");
+  expect(flags).not.toContain("no_stop");
+  expect(flags).not.toContain("excess_loss");
 });
 
 test("runSync snapshots account equity per currency and surfaces trade risk %", async () => {

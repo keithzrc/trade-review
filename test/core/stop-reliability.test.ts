@@ -1,132 +1,60 @@
 import { test, expect } from "bun:test";
 import { isUnreliableStop } from "../../src/core/stop-reliability";
 
-// Base = the real AMD case: LONG, entry 511.17, exit 508.36 (loss), inferred stop 510.89 (0.28 away),
-// mae 13.02 (price fell to 498.15 while the trade stayed open, then recovered to exit at 508.36).
+// Base = the real AMD case: LONG, entry 511.17 (loss), inferred stop 510.89 (0.28 away). Mid-hold the
+// price fell to 498.15 in a bar that closed DURING the hold → heldMae 13.02, far past the 0.28 stop.
 function amd(over: Partial<Parameters<typeof isUnreliableStop>[0]> = {}) {
   return isUnreliableStop({
-    direction: "LONG",
     avgEntry: 511.17,
-    closingExit: 508.36,
     realizedPnl: -11.24,
     stop: 510.89,
-    mae: 13.02,
+    heldMae: 13.02,
     manual: false,
     recoverMult: 1,
     ...over,
   });
 }
 
-test("AMD case: breached the stop AND recovered from the low → unreliable", () => {
+test("AMD case: price ran past the stop in a mid-hold bar → unreliable", () => {
   expect(amd()).toBe(true);
 });
 
-test("gap/slippage stop-out: exited AT the adverse low (no recovery) → reliable", () => {
-  // Entry 100, stop 95, gapped down and filled at 90 = the low. mae 10, realized loss 10.
+test("stop-out (single, gap, or split-fill): the low is in the EXIT bar → heldMae stays small → reliable", () => {
+  // A stop-out's adverse low sits in the excluded exit bar, so heldMae only reflects a shallow mid-hold
+  // dip (here 0.5, inside the 2-wide stop) — no matter how the closing prints split. excess_loss stays.
   expect(
-    isUnreliableStop({
-      direction: "LONG",
-      avgEntry: 100,
-      closingExit: 90,
-      realizedPnl: -1000,
-      stop: 95,
-      mae: 10, // breached the 5-wide stop...
-      manual: false,
-      recoverMult: 1,
-    }),
-  ).toBe(false); // ...but recovery = 10 - 10 = 0, not > stopDistance → excess_loss stays
+    isUnreliableStop({ avgEntry: 100, realizedPnl: -1000, stop: 98, heldMae: 0.5, manual: false, recoverMult: 1 }),
+  ).toBe(false);
 });
 
-test("never breached the stop → reliable (a clean ~1R loss like ANET)", () => {
-  // ANET: entry 173.42, exit 170.305, stop 170.21 (dist 3.21), mae 3.11 (< dist) → not breached.
+test("never breached mid-hold (heldMae within the stop) → reliable", () => {
+  // ANET-like: stop distance 3.21, deepest mid-hold dip 3.11 → didn't clear the stop.
   expect(
-    isUnreliableStop({
-      direction: "LONG",
-      avgEntry: 173.42,
-      closingExit: 170.305,
-      realizedPnl: -46.72,
-      stop: 170.21,
-      mae: 3.11,
-      manual: false,
-      recoverMult: 1,
-    }),
+    isUnreliableStop({ avgEntry: 173.42, realizedPnl: -46.72, stop: 170.21, heldMae: 3.11, manual: false, recoverMult: 1 }),
   ).toBe(false);
 });
 
 test("a winner is never flagged (losers only)", () => {
-  expect(amd({ realizedPnl: 50, closingExit: 520 })).toBe(false);
-});
-
-test("scale-out-then-stopped: closing at the low → reliable (avgExit would fake a recovery)", () => {
-  // LONG entry 100, stop 98 (dist 2). Sold half at 110 early, then the rest stopped at 84 = the low.
-  // avgExit would be 97 (recovery 13, a false positive); the CLOSING fill 84 is at the low → recovery 0.
-  expect(
-    isUnreliableStop({
-      direction: "LONG",
-      avgEntry: 100,
-      closingExit: 84, // the fill that closed the position, at the adverse low
-      realizedPnl: -300,
-      stop: 98,
-      mae: 16, // low 84
-      manual: false,
-      recoverMult: 1,
-    }),
-  ).toBe(false); // recovery = 16 - (100 - 84) = 0 → a real stop-out, excess_loss preserved
+  expect(amd({ realizedPnl: 50 })).toBe(false);
 });
 
 test("a manual stop is the user's explicit assertion — never second-guessed", () => {
   expect(amd({ manual: true })).toBe(false);
 });
 
-test("no stop / no mae / no exit / open trade → reliable (nothing to judge)", () => {
+test("no stop / no held excursion (too short, or candle outage) / open trade → reliable", () => {
   expect(amd({ stop: null })).toBe(false);
-  expect(amd({ mae: null })).toBe(false);
-  expect(amd({ closingExit: null })).toBe(false);
+  expect(amd({ heldMae: null })).toBe(false);
   expect(amd({ realizedPnl: null })).toBe(false);
 });
 
-test("recoverMult raises the bar: a marginal recovery below the threshold stays reliable", () => {
-  // Entry 100, stop 98 (dist 2), fell to 95 (mae 5, breached), exited 96 (loss 4) → recovery = 1.
-  const args = {
-    direction: "LONG" as const,
-    avgEntry: 100,
-    closingExit: 96,
-    realizedPnl: -400,
-    stop: 98,
-    mae: 5,
-    manual: false,
-  };
-  expect(isUnreliableStop({ ...args, recoverMult: 0.4 })).toBe(true); // 1 > 2*0.4=0.8
-  expect(isUnreliableStop({ ...args, recoverMult: 1 })).toBe(false); // 1 > 2*1=2 is false
+test("recoverMult sets the margin the mid-hold low must clear past the stop", () => {
+  // Stop distance 2, mid-hold low went 3 past it (heldMae 3).
+  const args = { avgEntry: 100, realizedPnl: -400, stop: 98, heldMae: 3, manual: false };
+  expect(isUnreliableStop({ ...args, recoverMult: 1 })).toBe(true); // 3 > 2 * 1
+  expect(isUnreliableStop({ ...args, recoverMult: 2 })).toBe(false); // 3 > 2 * 2 = 4 is false
 });
 
-test("SHORT mirror: price rose past the stop then fell back to a smaller loss → unreliable", () => {
-  // SHORT entry 100, stop 102 (dist 2), price spiked to 110 (mae 10, breached), covered at 101 (loss 1).
-  expect(
-    isUnreliableStop({
-      direction: "SHORT",
-      avgEntry: 100,
-      closingExit: 101,
-      realizedPnl: -100,
-      stop: 102,
-      mae: 10,
-      manual: false,
-      recoverMult: 1,
-    }),
-  ).toBe(true); // recovery = 10 - (101-100) = 9 > 2
-});
-
-test("SHORT gap-through: covered AT the high (no recovery) → reliable", () => {
-  expect(
-    isUnreliableStop({
-      direction: "SHORT",
-      avgEntry: 100,
-      closingExit: 110,
-      realizedPnl: -1000,
-      stop: 102,
-      mae: 10,
-      manual: false,
-      recoverMult: 1,
-    }),
-  ).toBe(false); // recovery = 10 - (110-100) = 0
+test("a zero-width stop (stop at entry) is not a risk basis → reliable", () => {
+  expect(amd({ stop: 511.17 })).toBe(false);
 });

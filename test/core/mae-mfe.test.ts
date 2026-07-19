@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test";
-import { computeExcursion } from "../../src/core/mae-mfe";
+import { computeExcursion, heldAdverseExcursion } from "../../src/core/mae-mfe";
 import { buildTrades } from "../../src/core/trade-builder";
 import { fill, candle } from "../helpers";
 import type { RawFill } from "../../src/domain/types";
@@ -117,4 +117,32 @@ test("open trade uses all candles from openTime onward", () => {
   const r = computeExcursion(openT, fills, candles, RES);
   expect(r.mfe).toBe(5); // 15 - 10
   expect(r.mae).toBe(2); // 10 - 8
+});
+
+// heldAdverseExcursion — the mid-hold adverse move used to detect a survived stop breach. Only bars
+// that closed DURING the hold count (fills and the entry/exit boundary bars are excluded).
+
+test("heldAdverseExcursion (long): worst low among fully-inside bars, vs entry", () => {
+  const { trade: t } = longTrade(); // entry 10, window [60000, 180000)
+  expect(heldAdverseExcursion(t, [candle(120_000, 7, 11)], RES)).toBe(3); // 10 - 7
+});
+
+test("heldAdverseExcursion excludes the exit bar — a stop-out low there does NOT count", () => {
+  const { trade: t } = longTrade(); // closes at 180000
+  // A deep low that lives in the straddling exit bar (start 150000) must be ignored → no inside bar.
+  expect(heldAdverseExcursion(t, [candle(150_000, 1, 100)], RES)).toBeNull();
+});
+
+test("heldAdverseExcursion (short): worst high among fully-inside bars, vs entry", () => {
+  const short = buildTrades([
+    fill("SELL", 100, 20, { time: 60_000 }),
+    fill("BUY", 100, 21, { time: 180_000 }),
+  ])[0]!;
+  expect(heldAdverseExcursion(short, [candle(120_000, 19, 26)], RES)).toBe(6); // 26 - 20
+});
+
+test("heldAdverseExcursion clamps to >= 0 and is null with no fully-inside bar", () => {
+  const { trade: t } = longTrade();
+  expect(heldAdverseExcursion(t, [candle(120_000, 11, 12)], RES)).toBe(0); // never went below entry
+  expect(heldAdverseExcursion(t, [], RES)).toBeNull(); // outage / too short
 });

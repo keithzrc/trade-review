@@ -16,7 +16,7 @@ import { buildTrades } from "../core/trade-builder";
 import { inferStops } from "../core/stop-inference";
 import { computeRisk } from "../core/risk";
 import { isUnreliableStop } from "../core/stop-reliability";
-import { computeExcursion } from "../core/mae-mfe";
+import { computeExcursion, heldAdverseExcursion } from "../core/mae-mfe";
 import { evaluate } from "../core/rule-engine";
 import { currencyEnumFor, currencyForMarket, knownMarket, marketName, TRD_ENV_REAL } from "../futu/map";
 import { insertFunds } from "../store/funds";
@@ -312,29 +312,38 @@ export async function rebuildDerived(
     const mae = excursion.mae ?? (sameInputs ? priorT.mae : null);
     const mfe = excursion.mfe ?? (sameInputs ? priorT.mfe : null);
 
-    // If the inferred stop can't be the trade's real initial risk (price ran past it yet the trade
-    // survived — a trailed/moved stop whose only surviving record is its final trigger), void risk/R
-    // so a fabricated 1R doesn't drive a bogus excess_loss/round_tripped_gain. The unreliable_stop
-    // flag (below) explains it. Manual stops are exempt inside isUnreliableStop.
-    // The CLOSING exit = the last fill (for a closed trade it's always a position-reducing exit).
-    // Used instead of avgExit so an early profit-taking leg can't fake a recovery. Order by the SAME
-    // (time, id) key buildTrades uses, so a same-timestamp closing tranche resolves to the true final
-    // fill rather than an earlier partial at that instant.
-    const closingFill = tradeFills
-      .slice()
-      .sort((a, b) => a.time - b.time || a.id.localeCompare(b.id))
-      .at(-1);
-    const stopUnreliable = isUnreliableStop({
-      direction: t.direction,
+    // If the inferred stop can't be the trade's real initial risk (price ran past it while the trade
+    // was still open — a trailed/moved stop whose only surviving record is its final trigger), void
+    // risk/R so a fabricated 1R doesn't drive a bogus excess_loss/round_tripped_gain. The
+    // unreliable_stop flag (below) explains it. Manual stops are exempt inside isUnreliableStop.
+    const liveUnreliable = isUnreliableStop({
       avgEntry: t.avgEntry,
-      closingExit: closingFill?.price ?? t.avgExit,
       realizedPnl: t.realizedPnl,
       stop: initialStop,
-      mae,
+      // Mid-hold adverse excursion (bars that closed DURING the hold, excluding the exit bar/fills):
+      // a genuine stop-out's low lives in the exit bar, so a split/gap stop can't fake a breach here.
+      heldMae: heldAdverseExcursion(t, bars, resMs),
       manual: ms != null,
       recoverMult: config.unreliableStopRecoverR,
     });
 
+    // The verdict needs candles; on an outage (no bars) heldMae is null → the check reads reliable.
+    // Reuse the PRIOR verdict so a previously-voided unreliable stop doesn't transiently resurface its
+    // bogus R (and excess_loss) until candles return — mirrors the mae carry. Only when NOTHING that
+    // feeds the verdict changed: same fills AND the same present stop basis (so a newly-added manual/
+    // order stop recomputes normally, not clobbered). A prior null risk with an unchanged, loss-side
+    // stop was a void for unreliability — a no-stop (null stop) or profit-side stop is excluded.
+    const initialOnProfitSide =
+      initialStop !== null && (t.direction === "LONG" ? initialStop > t.avgEntry : initialStop < t.avgEntry);
+    const carriedUnreliable =
+      bars.length === 0 &&
+      sameInputs &&
+      priorT !== undefined &&
+      priorT.risk === null &&
+      effectiveStop !== null &&
+      priorT.effectiveStop === effectiveStop &&
+      !initialOnProfitSide;
+    const stopUnreliable = bars.length === 0 ? carriedUnreliable : liveUnreliable;
     const enriched: Trade = {
       ...t,
       effectiveStop,

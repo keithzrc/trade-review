@@ -1,5 +1,33 @@
 import type { Candle, RawFill, Trade } from "../domain/types";
 
+/** Bars that closed strictly DURING the hold: start at/after openTime AND end at/before closeTime.
+ * These are the bars in which the trade was demonstrably still open (entry done, exit not yet) — the
+ * straddling entry/exit boundary bars are excluded. Timestamps are bar-START times, so a bar spans
+ * [time, time + resolution). */
+function fullyInsideBars(trade: Trade, candles: Candle[], resolution: number): Candle[] {
+  const end = trade.closeTime ?? Number.POSITIVE_INFINITY;
+  return candles.filter((c) => c.time >= trade.openTime && c.time + resolution <= end);
+}
+
+/**
+ * Worst ADVERSE excursion (per share, >= 0) reached in a bar that closed DURING the hold — i.e. from
+ * a fully-inside bar, EXCLUDING the fills and the entry/exit boundary bars. Distinct from
+ * `computeExcursion`'s `mae` (which folds in the exit fill): this answers "how far did price go
+ * against the trade while it was demonstrably still open?", used to tell a trade that SURVIVED a
+ * breach of its stop (adverse low in a mid-hold bar) from one that closed AT the breach (adverse low
+ * in the excluded exit bar). null when no bar closed inside the hold (too short, or a candle outage).
+ */
+export function heldAdverseExcursion(trade: Trade, candles: Candle[], resolution: number): number | null {
+  const inside = fullyInsideBars(trade, candles, resolution);
+  if (inside.length === 0) return null;
+  if (trade.direction === "LONG") {
+    const lo = Math.min(...inside.map((c) => c.low));
+    return Math.max(0, trade.avgEntry - lo);
+  }
+  const hi = Math.max(...inside.map((c) => c.high));
+  return Math.max(0, hi - trade.avgEntry);
+}
+
 /**
  * Max adverse/favorable excursion in price points per share, from the trade's avgEntry.
  *
@@ -26,10 +54,8 @@ export function computeExcursion(
   resolution: number,
 ): { mae: number | null; mfe: number | null } {
   if (candles.length === 0) return { mae: null, mfe: null };
-  const end = trade.closeTime ?? Number.POSITIVE_INFINITY;
-  // Bar [c.time, c.time + resolution) is fully inside [openTime, end): starts at/after open AND ends
-  // at/before close. Straddling boundary bars (entry/exit bars) are dropped — the fills cover them.
-  const inside = candles.filter((c) => c.time >= trade.openTime && c.time + resolution <= end);
+  // Straddling boundary bars (entry/exit bars) are dropped — the fills cover those edges.
+  const inside = fullyInsideBars(trade, candles, resolution);
 
   let hi = Number.NEGATIVE_INFINITY;
   let lo = Number.POSITIVE_INFINITY;

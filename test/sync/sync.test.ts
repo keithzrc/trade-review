@@ -120,6 +120,30 @@ test("runSync keeps R/excess_loss for a scale-out-then-stopped loss (closing fil
   expect(flags).not.toContain("unreliable_stop");
 });
 
+test("runSync picks the flattening fill among same-timestamp exits (closing-fill tie-break)", async () => {
+  // Two exits at the SAME instant: a partial at 110 (id f2) and the flattening stop at 84 (id f3).
+  // The closing fill must be f3 (84, the low) — matching buildTrades' (time,id) order — not f2, which
+  // would fake a recovery and wrongly void this real −1.5R stop-out.
+  const db = openTestDb();
+  const client = stubClient({
+    getHistoryFills: async () => [
+      { id: "f1", orderId: "o1", symbol: "US.AAPL", side: "BUY", qty: 100, price: 100, fee: 0, currency: "USD", time: 1000, account: "acc1" },
+      { id: "f2", orderId: "o2", symbol: "US.AAPL", side: "SELL", qty: 50, price: 110, fee: 0, currency: "USD", time: 7_200_000, account: "acc1" },
+      { id: "f3", orderId: "o3", symbol: "US.AAPL", side: "SELL", qty: 50, price: 84, fee: 0, currency: "USD", time: 7_200_000, account: "acc1" },
+    ],
+    getHistoryOrders: async () => [
+      { id: "s1", symbol: "US.AAPL", side: "SELL", type: "STOP", qty: 100, price: null, triggerPrice: 98, status: "FILLED_ALL", createTime: 1500, updateTime: null, account: "acc1" },
+    ],
+  });
+  const candles: CandleSource = {
+    getCandles: async (): Promise<Candle[]> => [{ time: 1000, open: 100, high: 111, low: 84, close: 84, volume: 1 }],
+  };
+  await runSync({ db, client, candles, config: DEFAULT_RULE_CONFIG, now: 10_000 });
+  const t = allTrades(db)[0]!;
+  expect(t.rMultiple).toBeCloseTo(-1.5, 5); // NOT voided by a mis-picked closing fill
+  expect(flagsForTrade(db, t.id).map((f) => f.ruleId)).not.toContain("unreliable_stop");
+});
+
 test("runSync snapshots account equity per currency and surfaces trade risk %", async () => {
   const db = openTestDb();
   const fundsCalls: Array<{ currency: number }> = [];

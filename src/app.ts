@@ -49,13 +49,20 @@ export async function main(): Promise<void> {
   const candles = cachedCandles(db, yahooCandles, { now: Date.now }); // live clock (long-lived server)
 
   // One-time local rebuild after a migration introduces a DERIVED column (v9 live_stop, v10
-  // realized_so_far): those are NULL on existing trades until re-derived, and the positions view would
-  // otherwise show stale live stops / zero banked profit until the first sync. Rebuild from local raw
-  // data only — a no-op candle source keeps it offline and preserves prior MAE/MFE. The NULL guard runs
+  // realized_so_far, v11 stop_unreliable): those are NULL on existing trades until re-derived, and the
+  // UI would otherwise show stale live stops / zero banked profit / stale risk flags until the first
+  // sync. Rebuild from local data only — NO network — but drive it with a CACHE-ONLY candle source
+  // (cachedCandles over an empty inner source): locally-cached bars activate the candle-dependent
+  // derivations (unreliable-stop detection, MAE/MFE) offline, while a cache miss or the live tail
+  // degrades to no bars. This immediately clears the stale excess_loss/round_tripped flags on trades
+  // whose candles are already cached, instead of waiting for a candle-backed sync. The NULL guard runs
   // this at most once per upgrade (replaceDerived then writes a value for every trade).
-  const needsBackfill = db.query(`SELECT 1 FROM trades WHERE realized_so_far IS NULL LIMIT 1`).get() != null;
+  const needsBackfill = db
+    .query(`SELECT 1 FROM trades WHERE realized_so_far IS NULL OR stop_unreliable IS NULL LIMIT 1`)
+    .get() != null;
   if (needsBackfill) {
-    await rebuildDerived(db, { candles: { getCandles: async () => [] }, config, now: Date.now() });
+    const cachedOnly = cachedCandles(db, { getCandles: async () => [] }, { now: Date.now });
+    await rebuildDerived(db, { candles: cachedOnly, config, now: Date.now() });
   }
 
   // Shared by the sync job and journal-triggered rebuilds so the two rebuilds never interleave.

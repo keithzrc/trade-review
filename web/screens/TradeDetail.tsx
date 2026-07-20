@@ -2,7 +2,7 @@ import { useMemo, useState, useRef, useEffect, type ReactNode } from "react";
 import { useTradeDetail, useCandles, useMeta, useTheme, useDrawings, usePutDrawings } from "../lib/hooks";
 import type { Drawing, Candle } from "../lib/api";
 import type { Res } from "../components/TradeChart";
-import { money, price, pct, rMultiple, signClass, date, dateTime, holdTime, qty } from "../lib/format";
+import { money, price, pct, pctSigned, rMultiple, signClass, date, dateTime, holdTime, qty } from "../lib/format";
 import { activePosition } from "../../src/core/active-position";
 import { FlagEditor } from "../components/FlagEditor";
 import { TradeChart } from "../components/TradeChart";
@@ -217,6 +217,7 @@ export function TradeDetail({ id }: { id: string }) {
 
       <div className="kpi-row" style={{ marginTop: 12 }}>
         {stat("Realized P&L", t.realizedPnl !== null ? money(t.realizedPnl, t.currency) : "—", signClass(t.realizedPnl))}
+        {stat("Return", pctSigned(data.returnPct), signClass(data.returnPct))}
         {stat("R-multiple", rMultiple(t.rMultiple), signClass(t.rMultiple))}
         {stat(
           "Planned risk",

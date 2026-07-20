@@ -124,6 +124,7 @@ export interface TradeSizing {
   riskPct: number | null; // planned risk / equity
   positionSize: number; // capital committed at max size (avgEntry × maxQty)
   sizePct: number | null; // positionSize / equity
+  returnPct: number | null; // realized P&L / positionSize — the trade's return on capital committed
 }
 
 /** Per-trade sizing as a fraction of account equity (SAME currency — never mix). `equityBasis`:
@@ -140,7 +141,12 @@ export function tradeSizing(db: Database, trade: Trade): TradeSizing {
   const riskPct = trade.risk !== null && usable ? trade.risk / equity : null;
   const positionSize = trade.avgEntry * trade.maxQty;
   const sizePct = usable ? positionSize / equity : null;
-  return { accountEquity: equity, equityBasis, riskPct, positionSize, sizePct };
+  // Return on the trade = realized P&L / capital committed. `realizedPnl` already carries direction
+  // (a winning short is +), so this is direction-agnostic here. Needs no equity, so it's known for any
+  // closed trade; null while open (P&L not yet realized) or when positionSize is 0 (degenerate).
+  const returnPct =
+    trade.realizedPnl !== null && positionSize > 0 ? trade.realizedPnl / positionSize : null;
+  return { accountEquity: equity, equityBasis, riskPct, positionSize, sizePct, returnPct };
 }
 
 export interface TradeDetail {
@@ -163,6 +169,10 @@ export interface TradeDetail {
   // account equity (same `equityBasis` as riskPct) — "this trade was N% of the account".
   positionSize: number;
   sizePct: number | null;
+  // Realized P&L as a fraction of capital committed — the trade's return on the position. Needs no
+  // equity, so it's known for any closed trade (null while open). Distinct from sizePct (of account)
+  // and from rMultiple (vs planned risk).
+  returnPct: number | null;
   // Current signed holding for an OPEN trade, from the latest positions snapshot (FUTU's own ground
   // truth) — reversal-safe, unlike summing this trade's fills (a flip-through-zero fill is split across
   // two trades but returned at full qty). 0 when flat / no snapshot. `positionAsOf` is that snapshot's
@@ -182,7 +192,7 @@ export function tradeDetail(db: Database, id: string): TradeDetail | null {
   const orders = allRawOrders(db).filter(
     (o) => o.account === trade.account && o.symbol === trade.symbol,
   );
-  const { accountEquity: equity, equityBasis, riskPct, positionSize, sizePct } = tradeSizing(db, trade);
+  const { accountEquity: equity, equityBasis, riskPct, positionSize, sizePct, returnPct } = tradeSizing(db, trade);
   // Current holding from the latest snapshot (only meaningful while open; a closed trade is flat).
   const positionAsOf = latestSnapshotTime(db);
   const held =
@@ -203,6 +213,7 @@ export function tradeDetail(db: Database, id: string): TradeDetail | null {
     equityBasis,
     positionSize,
     sizePct,
+    returnPct,
     currentQty: held?.qty ?? 0,
     positionAsOf,
     flagOverrides: getFlagOverrides(db, id),

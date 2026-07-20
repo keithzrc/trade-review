@@ -23,6 +23,7 @@ export interface TradeRow extends Trade {
   tags: string[];
   sizePct: number | null; // position size as a fraction of account equity ("≈" when basis is "latest")
   equityBasis: "at_open" | "latest" | "none";
+  returnPct: number | null; // realized P&L as a fraction of capital committed (the trade's return); null while open
 }
 
 export interface TradeDetail {
@@ -37,6 +38,7 @@ export interface TradeDetail {
   equityBasis: "at_open" | "latest" | "none";
   positionSize: number; // capital committed at max size (avgEntry × maxQty)
   sizePct: number | null; // positionSize / account equity
+  returnPct: number | null; // realized P&L / positionSize — the trade's return; null while open
   currentQty: number; // signed current holding from the latest snapshot (0 when flat/closed)
   positionAsOf: number; // that snapshot's clock (how fresh the holding/stop are)
   // The user's flag corrections (already merged into `flags`): which shown flags are manual, and

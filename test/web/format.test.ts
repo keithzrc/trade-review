@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test";
-import { money, price, pct, ratio, rMultiple, signClass, holdTime } from "../../web/lib/format";
+import { money, price, pct, pctSigned, ratio, rMultiple, signClass, holdTime } from "../../web/lib/format";
 
 test("money shows sign + currency symbol, never converts", () => {
   expect(money(1234.5, "USD")).toBe("+$1,234.50");
@@ -20,6 +20,13 @@ test("pct and rMultiple", () => {
   expect(rMultiple(2.4)).toBe("+2.40R");
   expect(rMultiple(-1)).toBe("−1.00R");
   expect(rMultiple(null)).toBe("—");
+});
+
+test("pctSigned shows an explicit sign and dashes when null", () => {
+  expect(pctSigned(0.064)).toBe("+6.4%");
+  expect(pctSigned(-0.021)).toBe("−2.1%");
+  expect(pctSigned(0)).toBe("0.0%");
+  expect(pctSigned(null)).toBe("—");
 });
 
 test("ratio", () => {

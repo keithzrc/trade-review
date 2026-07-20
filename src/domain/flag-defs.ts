@@ -86,6 +86,18 @@ const DEFS: FlagDef[] = [
     why: "Without a stop bounding the downside, risk is unbounded and R can't be measured.",
   },
   {
+    id: "unreliable_stop",
+    title: "Unreliable stop",
+    category: "stop-risk",
+    // Not a trading mistake — a data-quality caveat: FUTU reports only a stop's final trigger, so a
+    // trailed/moved stop can't be read as the initial risk. R stays visible but is excluded from the R
+    // averages, and we prompt for a Manual stop rather than silently trusting a suspect basis.
+    kind: "hygiene",
+    defaultSeverity: "warn",
+    summary: "Price ran past this stop while the trade stayed open, so it isn't your initial risk — set a Manual stop for an accurate R.",
+    why: "A trailed or moved stop reports only its final trigger, so its R is suspect and left out of your R averages until you confirm the real stop.",
+  },
+  {
     id: "wide_stop",
     title: "Wide stop",
     category: "stop-risk",

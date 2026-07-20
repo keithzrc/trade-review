@@ -179,3 +179,16 @@ test("a SILENTLY-EMPTY source (returns [] not throws) on a partial range also de
   const out = await cachedCandles(d, empty, { now }).getCandles("US.AAPL", 1 * DAY, 50 * DAY, DAY);
   expect(out).toEqual([]);
 });
+
+test("a cache-only source (empty inner) SERVES a fully-covered warm range — the offline-upgrade path", async () => {
+  // app.ts drives the one-time upgrade rebuild with cachedCandles(db, {()=>[]}) so cached bars activate
+  // candle-dependent derivations (unreliable-stop detection, MAE/MFE) with zero network. That hinges on
+  // a fully-covered range being served even though the inner source returns nothing.
+  const d = db();
+  const now = 100 * DAY;
+  const good = { getCandles: async (_s: string, from: number) => bars([from, from + DAY]) };
+  await cachedCandles(d, good, { now }).getCandles("US.AAPL", 1 * DAY, 3 * DAY, DAY); // warm + cover [1,3]d
+  const cacheOnly = cachedCandles(d, { getCandles: async () => [] }, { now });
+  const out = await cacheOnly.getCandles("US.AAPL", 1 * DAY, 3 * DAY, DAY);
+  expect(out.length).toBeGreaterThan(0); // served from cache, no network
+});

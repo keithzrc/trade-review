@@ -217,6 +217,15 @@ export const MIGRATIONS: ReadonlyArray<(db: Database) => void> = [
       );
     `);
   },
+  // v13 — persist the unreliable-stop verdict: the inferred initial stop can't be the real risk basis
+  // (price ran past it while the trade was still open — a trailed stop reported by FUTU as the initial
+  // trigger). Drives the unreliable_stop flag and the R-average exclusion. Derived column, and
+  // deliberately NULLABLE (no DEFAULT): NULL means "not yet re-derived", which the reader treats as
+  // reliable (safe — R stays counted) AND which triggers the one-time upgrade rebuild in app.ts (see
+  // needsBackfill) so migrated trades re-derive from cached candles instead of showing stale flags.
+  (db) => {
+    db.run(`ALTER TABLE trades ADD COLUMN stop_unreliable INTEGER;`);
+  },
 ];
 
 export function currentVersion(db: Database): number {

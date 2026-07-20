@@ -291,6 +291,10 @@ export function TradeDetail({ id }: { id: string }) {
               const profitSide =
                 plannedStop != null &&
                 (t.direction === "LONG" ? plannedStop > t.avgEntry : plannedStop < t.avgEntry);
+              // The inferred stop was judged unreliable (price ran past it while the trade stayed open,
+              // so it isn't the real initial risk). R stays shown, but flagged suspect + excluded from
+              // the R averages — prompt a Manual stop rather than trusting this basis.
+              const unreliable = t.stopUnreliable && journal?.manualStop == null;
               return (
                 <>
                   <div>
@@ -303,6 +307,13 @@ export function TradeDetail({ id }: { id: string }) {
                     {plannedStop != null && t.risk !== null && (
                       <div className="faint mono" style={{ marginTop: 2 }}>
                         |{price(t.avgEntry, t.currency)} − {price(plannedStop, t.currency)}| × {qty(t.maxQty)} = {price(t.risk, t.currency)}
+                      </div>
+                    )}
+                    {unreliable && (
+                      <div className="faint" style={{ marginTop: 2 }}>
+                        ⚠ Price ran past this stop while the trade stayed open, so it isn't your initial
+                        risk (likely trailed or moved). R is still shown but excluded from your R
+                        averages — enter a Manual stop above to set the real risk basis.
                       </div>
                     )}
                     {plannedStop != null && t.risk === null && (

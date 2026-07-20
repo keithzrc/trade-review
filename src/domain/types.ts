@@ -83,6 +83,11 @@ export interface Trade {
   rMultiple: number | null;
   mae: number | null;
   mfe: number | null;
+  // True when the inferred initial stop can't be the real risk basis (price ran past it while the
+  // trade was demonstrably still open — a trailed/moved stop reported by FUTU as the initial trigger).
+  // R stays VISIBLE per-trade, but the trade is flagged (unreliable_stop) for manual input and
+  // EXCLUDED from the R averages. Derived + stored; rebuilt every sync. See sync.ts / stop-reliability.
+  stopUnreliable: boolean;
 }
 
 /** FUTU order type (normalized). Stop/stop-limit/trailing are protective-stop candidates. */
@@ -122,6 +127,7 @@ export interface Candle {
 /** Output of stop inference for one trade. */
 export interface StopInfo {
   initialStop: number | null; // earliest protective stop — the planned risk (use for R-multiple)
+  initialStopType: OrderType | null; // type of the order behind initialStop (STOP_LIMIT may not fill)
   effectiveStop: number | null; // latest protective stop — what was actually protecting at the end
   effectiveTp: number | null;
   stopOrderId: string | null; // id of the order behind effectiveStop (provenance)
@@ -153,6 +159,9 @@ export interface RuleConfig {
   pyramidExtendedPct: number; // flag a pyramid add priced above first entry by more than this (default 0.05)
   overtradeWindowDays: number; // window for the overtrading-frequency count (default 1 day)
   overtradeMaxOpens: number; // flag when opens within the window exceed this count (default 3)
+  // unreliable_stop: a losing trade's price ran past its inferred stop by more than this many
+  // stop-widths back from its low (i.e. it recovered, so the stop wasn't the resting initial one).
+  unreliableStopRecoverR: number; // default 1
   enabled: Record<string, boolean>; // ruleId → enabled; missing key = enabled
 }
 
@@ -166,6 +175,7 @@ export const DEFAULT_RULE_CONFIG: RuleConfig = {
   pyramidExtendedPct: 0.05,
   overtradeWindowDays: 1,
   overtradeMaxOpens: 3,
+  unreliableStopRecoverR: 1,
   enabled: {},
 };
 

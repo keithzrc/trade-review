@@ -165,6 +165,7 @@ function finalize(acc: Acc): Trade {
     rMultiple: null,
     mae: null,
     mfe: null,
+    stopUnreliable: false,
   };
 }
 

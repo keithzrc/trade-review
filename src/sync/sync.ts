@@ -15,7 +15,8 @@ import type {
 import { buildTrades } from "../core/trade-builder";
 import { inferStops } from "../core/stop-inference";
 import { computeRisk } from "../core/risk";
-import { computeExcursion } from "../core/mae-mfe";
+import { isUnreliableStop } from "../core/stop-reliability";
+import { computeExcursion, heldAdverseExcursion } from "../core/mae-mfe";
 import { evaluate } from "../core/rule-engine";
 import { currencyEnumFor, currencyForMarket, knownMarket, marketName, TRD_ENV_REAL } from "../futu/map";
 import { insertFunds } from "../store/funds";
@@ -311,6 +312,63 @@ export async function rebuildDerived(
     const mae = excursion.mae ?? (sameInputs ? priorT.mae : null);
     const mfe = excursion.mfe ?? (sameInputs ? priorT.mfe : null);
 
+    // Detect an UNRELIABLE stop: price ran past the inferred initial stop while the trade was
+    // demonstrably still open (a trailed/moved stop whose only surviving record is its final
+    // trigger, reported by FUTU as if it were the initial risk). We do NOT rewrite risk/R — we
+    // can't be certain the stop was trailed vs simply blown through, and the user sets their own
+    // stop. Instead we FLAG the trade for manual input (unreliable_stop) and EXCLUDE it from the R
+    // averages downstream, while keeping its per-trade R visible.
+    //
+    // Non-candle preconditions for the verdict — everything EXCEPT the mid-hold breach itself (which
+    // needs candles). Extracted so the live check and the outage carry share ONE definition: the carry
+    // can then only ever preserve the candle-derived breach fact, never a verdict whose other inputs
+    // have since changed (e.g. a fee correction flipping a loser to a winner). Each clause:
+    //   - `risk !== null`: a valid loss-side R basis. computeRisk returns null for a profit-side or
+    //     split-corrupted stop; without a real R there's nothing to flag, and firing here would emit
+    //     unreliable_stop AND no_stop together. So an unreliable stop always implies a present R.
+    //   - `ms == null`: a manual stop is the AUTHORITATIVE override (isUnreliableStop exempts it) — it
+    //     must clear the flag immediately, never stay stuck behind the carry.
+    //   - `initialStopType !== "STOP_LIMIT"`: a PLAIN stop-limit's trigger IS the intended initial
+    //     stop, and it can legitimately TRIGGER but not FILL on a gap — so a breach doesn't prove it
+    //     moved; the trigger may be the real stop and the deeper loss a genuine excess_loss. Exempt it.
+    //     A TRAILING stop (FUTU type 14 AND the trailing-stop-LIMIT type 15, both normalized to
+    //     TRAILING_STOP) is deliberately NOT exempt: FUTU stores only its FINAL trailed trigger, never
+    //     the initial, so its R is suspect BY NATURE — a mid-hold breach of even that final trigger is
+    //     exactly the unreliable case we want to flag (prompting a Manual stop), fill-or-not.
+    //   - losers only: a winner can never be an unreliable-stop loss.
+    const eligibleForUnreliable =
+      risk !== null &&
+      ms == null &&
+      stop.initialStopType !== "STOP_LIMIT" &&
+      t.realizedPnl !== null &&
+      t.realizedPnl < 0;
+
+    const liveUnreliable = eligibleForUnreliable && isUnreliableStop({
+      avgEntry: t.avgEntry,
+      realizedPnl: t.realizedPnl,
+      stop: initialStop,
+      // Mid-hold adverse excursion (bars that closed DURING the hold, excluding the exit bar/fills):
+      // a genuine stop-out's low lives in the exit bar, so a split/gap stop can't fake a breach here.
+      heldMae: heldAdverseExcursion(t, tradeFills, bars, resMs),
+      manual: ms != null,
+      recoverMult: config.unreliableStopRecoverR,
+    });
+
+    // The verdict needs candles; on an outage (no bars) heldMae is null → the live check reads reliable.
+    // Carry the PRIOR verdict so the flag (and its R-average exclusion) doesn't flicker off until candles
+    // return — mirrors the mae carry. Guarded by the SAME live preconditions (eligibleForUnreliable) so a
+    // change to any of them clears it now, PLUS an unchanged trade shape: same fills (sameInputs), the
+    // same initial risk basis (`priorT.risk === risk` — an unchanged stop distance given fixed
+    // avgEntry/maxQty), and the same effective stop. Only the candle-derived breach is actually carried.
+    const carriedUnreliable =
+      bars.length === 0 &&
+      eligibleForUnreliable &&
+      sameInputs &&
+      priorT !== undefined &&
+      priorT.stopUnreliable &&
+      priorT.risk === risk &&
+      priorT.effectiveStop === effectiveStop;
+    const stopUnreliable = bars.length === 0 ? carriedUnreliable : liveUnreliable;
     const enriched: Trade = {
       ...t,
       effectiveStop,
@@ -320,6 +378,7 @@ export async function rebuildDerived(
       rMultiple,
       mae,
       mfe,
+      stopUnreliable,
     };
 
     const fills = allFills.filter((f) => t.fillIds.includes(f.id));

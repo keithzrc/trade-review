@@ -38,6 +38,14 @@ export function pct(fraction: number): string {
   return `${(fraction * 100).toFixed(1)}%`;
 }
 
+/** Signed percentage for outcomes (returns), e.g. +6.4% / −2.1% / 0.0%, or "—" when unknown. Pairs
+ * with signClass for coloring — like money()/rMultiple(), it leads with the sign so a loss reads red. */
+export function pctSigned(fraction: number | null): string {
+  if (fraction === null) return "—";
+  const sign = fraction < 0 ? "−" : fraction > 0 ? "+" : "";
+  return `${sign}${(Math.abs(fraction) * 100).toFixed(1)}%`;
+}
+
 /** R-multiple, e.g. +2.4R, −1.0R, or "—" when risk is unknown. */
 export function rMultiple(r: number | null): string {
   if (r === null) return "—";

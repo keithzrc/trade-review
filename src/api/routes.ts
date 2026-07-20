@@ -144,6 +144,9 @@ function tradesWithMeta(db: Database) {
       // Position size as % of account equity — the headline sizing metric (see sizing preference).
       sizePct: sizing.sizePct,
       equityBasis: sizing.equityBasis,
+      // Trade return on capital committed (realized P&L / position size) — the outcome %, distinct from
+      // the sizing % above and from R (which is vs planned risk). null while open.
+      returnPct: sizing.returnPct,
     };
   });
 }

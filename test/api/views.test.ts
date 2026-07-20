@@ -243,6 +243,8 @@ test("tradeSizing: position size as % of account equity, with basis fallback (no
   expect(none.sizePct).toBeNull();
   expect(none.riskPct).toBeNull();
   expect(none.positionSize).toBeCloseTo(1000); // 100 × 10
+  // Return % needs no equity — it's P&L over capital committed, so it's known even with basis "none".
+  expect(none.returnPct).toBeCloseTo(0.1); // realizedPnl 100 / positionSize 1000
 
   // Snapshot AFTER the open (t=1500 > 1000) → approximate "latest" basis.
   insertFunds(d, { account: "a", currency: "USD", totalAssets: 20_000, cash: 0, marketVal: 0, time: 1500 });
@@ -256,6 +258,26 @@ test("tradeSizing: position size as % of account equity, with basis fallback (no
   expect(atOpen.equityBasis).toBe("at_open");
   expect(atOpen.sizePct).toBeCloseTo(0.1); // 1000 / 10000
   expect(atOpen.riskPct).toBeCloseTo(0.005); // 50 / 10000
+});
+
+test("tradeSizing: returnPct is P&L over capital committed, direction-agnostic, null while open", () => {
+  const d = db();
+  // Winning SHORT (the reported screenshot case): entry 4.05, covered 3.79, tiny 25-share sliver.
+  // realizedPnl already carries direction, so returnPct just divides it by positionSize (4.05 × 25).
+  d.run(
+    `INSERT INTO trades (id, account, symbol, currency, direction, status, open_time, close_time, avg_entry, avg_exit, max_qty, realized_pnl, fees, coverage_ok, effective_stop, risk, r_multiple)
+     VALUES ('s1','a','US.SOXS','USD','SHORT','closed', 1000, 2000, 4.05, 3.79, 25, 6.5, 0, 1, NULL, NULL, NULL)`,
+  );
+  const short = allTrades(d).find((t) => t.id === "s1")!;
+  expect(tradeSizing(d, short).returnPct).toBeCloseTo(6.5 / (4.05 * 25)); // ≈ +6.4%, tracks the price move
+
+  // Still-open trade has no realizedPnl → no return yet.
+  d.run(
+    `INSERT INTO trades (id, account, symbol, currency, direction, status, open_time, close_time, avg_entry, avg_exit, max_qty, realized_pnl, fees, coverage_ok, effective_stop, risk, r_multiple)
+     VALUES ('o1','a','US.AAPL','USD','LONG','open', 1000, NULL, 100, NULL, 10, NULL, 0, 1, NULL, NULL, NULL)`,
+  );
+  const open = allTrades(d).find((t) => t.id === "o1")!;
+  expect(tradeSizing(d, open).returnPct).toBeNull();
 });
 
 test("tradeDetail expresses planned risk as % of equity at open (same currency), null without a snapshot", () => {

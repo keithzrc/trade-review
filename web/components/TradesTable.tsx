@@ -1,10 +1,10 @@
 import { useMemo, useState } from "react";
 import { useLocation } from "wouter";
 import type { TradeRow } from "../lib/api";
-import { money, price, rMultiple, signClass, date, holdTime, pct } from "../lib/format";
+import { money, price, rMultiple, signClass, date, holdTime, pct, pctSigned } from "../lib/format";
 import { FlagChips } from "./FlagChips";
 
-type SortKey = "symbol" | "openTime" | "closeTime" | "realizedPnl" | "rMultiple" | "holdSeconds" | "sizePct";
+type SortKey = "symbol" | "openTime" | "closeTime" | "realizedPnl" | "returnPct" | "rMultiple" | "holdSeconds" | "sizePct";
 
 const COLS: Array<{ key: SortKey | null; label: string; right?: boolean }> = [
   { key: "symbol", label: "Symbol" },
@@ -15,6 +15,7 @@ const COLS: Array<{ key: SortKey | null; label: string; right?: boolean }> = [
   { key: null, label: "Entry → Exit", right: true },
   { key: "sizePct", label: "Size %", right: true },
   { key: "realizedPnl", label: "Realized P&L", right: true },
+  { key: "returnPct", label: "Return %", right: true },
   { key: "rMultiple", label: "R", right: true },
   { key: null, label: "Flags" },
 ];
@@ -102,6 +103,9 @@ export function TradesTable({ rows }: { rows: TradeRow[] }) {
               </td>
               <td className={`right num ${signClass(t.realizedPnl)}`}>
                 {t.realizedPnl !== null ? money(t.realizedPnl, t.currency) : "—"}
+              </td>
+              <td className={`right num ${signClass(t.returnPct)}`} title="Realized P&L as a % of capital committed (avg entry × max size) — the trade's return; independent of account equity">
+                {t.returnPct !== null ? pctSigned(t.returnPct) : <span className="faint">—</span>}
               </td>
               <td className={`right num ${signClass(t.rMultiple)}`}>{rMultiple(t.rMultiple)}</td>
               <td style={{ maxWidth: 260, whiteSpace: "normal" }}>

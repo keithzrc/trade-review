@@ -2,6 +2,7 @@ import { useStats, useTrades, useTheme } from "../lib/hooks";
 import { Kpis } from "../components/Kpis";
 import { EquityChart } from "../components/EquityChart";
 import { BreakdownTable } from "../components/BreakdownTable";
+import { MistakeCosts } from "../components/MistakeCosts";
 import { TradesTable } from "../components/TradesTable";
 
 export function Dashboard() {
@@ -23,6 +24,12 @@ export function Dashboard() {
       {byCurrency.some((c) => c.equityCurve.length > 1) && (
         <>
           <div className="section-title">Equity curve</div>
+          {/* One-line key so the chart is self-explaining: what the line is, and what the color means
+              (EquityChart tints the whole series by the LATEST cumulative value's sign). */}
+          <div className="faint" style={{ fontSize: 11, margin: "-6px 0 8px" }}>
+            Cumulative realized P&L across closed trades, one chart per currency — green while the
+            running total is above zero, red while below.
+          </div>
           <div className="grid" style={{ gridTemplateColumns: byCurrency.length > 1 ? "1fr 1fr" : "1fr" }}>
             {byCurrency
               .filter((c) => c.equityCurve.length > 1)
@@ -43,6 +50,9 @@ export function Dashboard() {
 
       <div className="section-title">Find my edge</div>
       <BreakdownTable />
+
+      <div className="section-title">Cost of mistakes</div>
+      {trades.isLoading ? <div className="spinner">Loading…</div> : <MistakeCosts rows={trades.data ?? []} />}
 
       <div className="section-title">Flagged trades ({flagged.length})</div>
       {trades.isLoading ? (

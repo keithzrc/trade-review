@@ -842,3 +842,16 @@ table.data tbody tr.clickable {
   background: color-mix(in srgb, var(--warn) 15%, transparent);
   border: 1px solid color-mix(in srgb, var(--warn) 35%, transparent);
 }
+
+/* Dense variant for the Daily heatmap tables: tighter cells so the full momentum column set fits
+   the viewport without horizontal scrolling. */
+table.data.dense {
+  font-size: 12px;
+}
+table.data.dense th {
+  padding: 6px 7px;
+  letter-spacing: 0.02em;
+}
+table.data.dense td {
+  padding: 5px 7px;
+}

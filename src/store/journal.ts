@@ -1,5 +1,5 @@
 import type { Database } from "bun:sqlite";
-import type { Journal, WatchlistItem, WeeklyEntry } from "../domain/journal-types";
+import type { DailyEntry, Journal, WatchlistItem, WeeklyEntry } from "../domain/journal-types";
 import type { Trade } from "../domain/types";
 import { allTrades } from "./repos";
 
@@ -144,5 +144,51 @@ export function tradesInRange(db: Database, startMs: number, endMs: number): Tra
     (t) =>
       (t.openTime >= startMs && t.openTime < endMs) ||
       (t.closeTime !== null && t.closeTime >= startMs && t.closeTime < endMs),
+  );
+}
+
+// ---- daily entry --------------------------------------------------------------
+// The snapshot stays a raw JSON string at this layer (parsed/validated at the API edge) — the store
+// doesn't care about its shape, and re-serializing on every read would be wasted work.
+
+export interface DailyEntryRow extends DailyEntry {
+  snapshotJson: string | null;
+}
+
+export function getDailyEntry(db: Database, id: string): DailyEntryRow | null {
+  const row = db
+    .query(
+      `SELECT id, regime, market_read, notes, snapshot, snapshot_at, updated_at
+       FROM daily_entries WHERE id = ?`,
+    )
+    .get(id) as any;
+  if (!row) return null;
+  return {
+    id: row.id,
+    regime: row.regime,
+    marketRead: row.market_read,
+    notes: row.notes,
+    snapshotJson: row.snapshot,
+    snapshotAt: row.snapshot_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+export function upsertDailyEntry(db: Database, e: DailyEntryRow): void {
+  db.run(
+    `INSERT INTO daily_entries (id, regime, market_read, notes, snapshot, snapshot_at, updated_at)
+     VALUES ($id, $regime, $read, $notes, $snap, $snapAt, $updatedAt)
+     ON CONFLICT(id) DO UPDATE SET
+       regime=$regime, market_read=$read, notes=$notes, snapshot=$snap, snapshot_at=$snapAt,
+       updated_at=$updatedAt`,
+    {
+      $id: e.id,
+      $regime: e.regime,
+      $read: e.marketRead,
+      $notes: e.notes,
+      $snap: e.snapshotJson,
+      $snapAt: e.snapshotAt,
+      $updatedAt: e.updatedAt,
+    } as any,
   );
 }

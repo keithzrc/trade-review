@@ -53,6 +53,67 @@ export function usePutJournal(id: string) {
   });
 }
 
+/** Save the user's flag corrections (dismiss computed / add manual). Flags are annotations — they
+ * don't feed risk/R/stats math — but they DO show on the trades list and the dashboard's flagged
+ * section, so refresh those lists alongside writing the returned detail into the cache. */
+export function usePutFlags(id: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { added: string[]; dismissed: string[] }) => api.putFlags(id, body),
+    onSuccess: (detail) => {
+      qc.setQueryData(["trade", id], detail);
+      qc.invalidateQueries({ queryKey: ["trades"] });
+    },
+  });
+}
+
+// ---- Daily market heatmap + daily journal ----
+// The server fans out to the candle source, so give it a real staleTime — a page revisit within a few
+// minutes reuses the cached response instead of re-hitting Yahoo ~25 times. `enabled` lets the Daily
+// page skip the live fetch entirely when it's showing a past day's frozen snapshot.
+export const useHeatmap = (enabled = true) =>
+  useQuery({ queryKey: ["heatmap"], queryFn: api.heatmap, staleTime: 5 * 60_000, enabled });
+
+export function usePutHeatmapGroups() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (groups: Array<{ name: string; symbols: Array<{ symbol: string; label: string | null }> }>) =>
+      api.putHeatmapGroups(groups),
+    // The groups changed → the heatmap's composition changed; refetch it (new symbols need candles).
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["heatmap"] }),
+  });
+}
+
+/** Edit the thematic ranking universe (the candidate list behind "Top 10 thematic"). */
+export function usePutThematic() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (symbols: Array<{ symbol: string; label: string | null }>) => api.putThematic(symbols),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["heatmap"] }),
+  });
+}
+
+/** "Reset to defaults": drops the stored group config so the app's built-in lists (with industry
+ * labels and the EW sector group) apply again. */
+export function useResetHeatmapGroups() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: api.resetHeatmapGroups,
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["heatmap"] }),
+  });
+}
+
+export const useDay = (dayKey: string) =>
+  useQuery({ queryKey: ["day", dayKey], queryFn: () => api.day(dayKey), enabled: !!dayKey });
+
+export function usePutDay(dayKey: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: Record<string, unknown>) => api.putDay(dayKey, body),
+    onSuccess: (view) => qc.setQueryData(["day", dayKey], view),
+  });
+}
+
 /** Poll sync status only while a sync is running; when it flips to done, invalidate everything so
  * the whole app refetches the freshly-synced data (one place, not a manual refetch cascade). */
 export function useSyncStatus() {

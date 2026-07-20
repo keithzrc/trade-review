@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { Link } from "wouter";
+import { Link, useLocation } from "wouter";
 import { useWeek, usePutWeek } from "../lib/hooks";
 import { isoWeekKey, weekLabel } from "../lib/week";
 import { money, rMultiple, signClass, date } from "../lib/format";
@@ -37,6 +37,7 @@ export function WeeklyJournal() {
 
 function WeekBody({ isoWeek }: { isoWeek: string }) {
   const { data, isLoading } = useWeek(isoWeek);
+  const [, navigate] = useLocation();
   const save = usePutWeek(isoWeek);
   const [marketRead, setMarketRead] = useState("");
   const [tradedVsPlan, setTradedVsPlan] = useState("");
@@ -150,7 +151,10 @@ function WeekBody({ isoWeek }: { isoWeek: string }) {
                 </tr>
               )}
               {(data?.trades ?? []).map((t) => (
-                <tr key={t.id} className="clickable">
+                // Whole row navigates (same pattern as TradesTable) — the symbol keeps its real <Link>
+                // for middle-click/open-in-new-tab; a plain click on it bubbles to the row's navigate,
+                // which goes to the same URL, so the two never fight.
+                <tr key={t.id} className="clickable" onClick={() => navigate(`/trades/${encodeURIComponent(t.id)}`)}>
                   <td className="mono">
                     <Link href={`/trades/${encodeURIComponent(t.id)}`}>{t.symbol}</Link>
                   </td>

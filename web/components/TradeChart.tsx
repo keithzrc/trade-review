@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, type ReactNode } from "react";
 import { init, dispose, registerOverlay, type Chart, type KLineData } from "klinecharts";
 import type { Candle, RawFill, Drawing, Res } from "../lib/api";
 
@@ -132,6 +132,60 @@ const TOOLS: Array<{ name: string; label: string }> = [
   { name: "fibonacciLine", label: "Fib" },
   { name: "brush", label: "Brush" },
 ];
+
+/** What each locked mark on the chart means. An entry appears only when its line/marker is actually
+ * drawn (no TP line → no TP row), so the legend never promises a mark that isn't there. Colors are
+ * the same CSS vars the overlays sample — the legend re-themes with the chart for free (this is DOM,
+ * so `light-dark()` vars resolve natively; no themeColors() probe needed). */
+function Legend({ marks, hasFills }: { marks: ChartMarks; hasFills: boolean }) {
+  const swatch = (color: string, dashed: boolean) => (
+    <span
+      aria-hidden
+      style={{ display: "inline-block", width: 18, borderTop: `2px ${dashed ? "dashed" : "solid"} ${color}` }}
+    />
+  );
+  const pill = (color: string, letter: string) => (
+    <span
+      aria-hidden
+      style={{
+        display: "inline-flex", alignItems: "center", justifyContent: "center",
+        width: 15, height: 15, borderRadius: 8, background: color,
+        color: "#fff", fontSize: 9, fontWeight: 700, lineHeight: 1,
+      }}
+    >
+      {letter}
+    </span>
+  );
+  const item = (key: string, mark: ReactNode, label: string) => (
+    <span key={key} style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
+      {mark}
+      {label}
+    </span>
+  );
+  const items = [item("entry", swatch("var(--accent)", true), "Avg entry")];
+  if (marks.effectiveStop !== null) items.push(item("sl", swatch("var(--neg)", false), "Stop (active)"));
+  // Same visibility rule as the overlay: the planned/R-basis stop only exists as a separate line when
+  // it differs from the active stop.
+  if (marks.plannedStop !== null && marks.plannedStop !== marks.effectiveStop)
+    items.push(item("plan", swatch("var(--neg)", true), "Planned stop (R basis)"));
+  if (marks.effectiveTp !== null) items.push(item("tp", swatch("var(--pos)", true), "Take profit"));
+  if (hasFills)
+    items.push(
+      item(
+        "fills",
+        <span style={{ display: "inline-flex", gap: 3 }}>
+          {pill("var(--pos)", "B")}
+          {pill("var(--neg)", "S")}
+        </span>,
+        "Buy / sell fills",
+      ),
+    );
+  return (
+    <div className="faint" style={{ display: "flex", flexWrap: "wrap", gap: 14, fontSize: 11, marginTop: 6 }}>
+      {items}
+    </div>
+  );
+}
 
 /** Marked-up candlestick chart on klinecharts: candles + volume, fill markers, entry/stop/TP lines,
  * a 1D/1H/15m resolution toggle, and drawing tools whose annotations persist per trade. */
@@ -438,6 +492,7 @@ export function TradeChart({
           </div>
         )}
       </div>
+      {candles.length > 0 && <Legend marks={marks} hasFills={fills.length > 0} />}
     </div>
   );
 }

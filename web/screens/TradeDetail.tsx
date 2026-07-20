@@ -4,8 +4,7 @@ import type { Drawing, Candle } from "../lib/api";
 import type { Res } from "../components/TradeChart";
 import { money, price, pct, rMultiple, signClass, date, dateTime, holdTime, qty } from "../lib/format";
 import { activePosition } from "../../src/core/active-position";
-import { FlagChips } from "../components/FlagChips";
-import { flagDef, FLAG_CATEGORY_ORDER, FLAG_CATEGORY_LABEL } from "../../src/domain/flag-defs";
+import { FlagEditor } from "../components/FlagEditor";
 import { TradeChart } from "../components/TradeChart";
 import { JournalEditor } from "../components/JournalEditor";
 
@@ -281,32 +280,7 @@ export function TradeDetail({ id }: { id: string }) {
           <div className="section-title" style={{ marginTop: 0 }}>
             Flags
           </div>
-          <div className="card" style={{ padding: 12 }}>
-            {flags.length === 0 ? (
-              <span className="muted">No mistake flags — clean mechanics.</span>
-            ) : (
-              FLAG_CATEGORY_ORDER.map((cat) => {
-                const inCat = flags.filter((f) => flagDef(f.ruleId).category === cat);
-                if (inCat.length === 0) return null;
-                return (
-                  <div key={cat} style={{ marginBottom: 12 }}>
-                    <div
-                      className="muted"
-                      style={{ fontSize: 10.5, textTransform: "uppercase", letterSpacing: ".05em", marginBottom: 5 }}
-                    >
-                      {FLAG_CATEGORY_LABEL[cat]}
-                    </div>
-                    <FlagChips flags={inCat} />
-                    <ul className="muted" style={{ margin: "8px 0 0", paddingLeft: 18, lineHeight: 1.7 }}>
-                      {inCat.map((f) => (
-                        <li key={f.ruleId}>{f.reason}</li>
-                      ))}
-                    </ul>
-                  </div>
-                );
-              })
-            )}
-          </div>
+          <FlagEditor tradeId={id} flags={flags} overrides={data.flagOverrides} />
 
           <div className="section-title">Stops &amp; risk basis</div>
           <div className="card" style={{ padding: 12, display: "flex", flexDirection: "column", gap: 10, fontSize: 12 }}>

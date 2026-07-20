@@ -2,6 +2,7 @@ import { Route, Switch } from "wouter";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Layout } from "./components/Layout";
 import { Dashboard } from "./screens/Dashboard";
+import { Daily } from "./screens/Daily";
 import { Trades } from "./screens/Trades";
 import { TradeDetail } from "./screens/TradeDetail";
 import { Positions } from "./screens/Positions";
@@ -19,6 +20,11 @@ export function App() {
         <Route path="/">
           <Layout title="Dashboard">
             <Dashboard />
+          </Layout>
+        </Route>
+        <Route path="/daily">
+          <Layout title="Daily market">
+            <Daily />
           </Layout>
         </Route>
         <Route path="/trades">

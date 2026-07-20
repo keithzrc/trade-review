@@ -50,6 +50,34 @@ export function isValidIsoWeek(key: string): boolean {
   return !Number.isNaN(start) && isoWeekOf(start) === key;
 }
 
+/** Local-calendar day key ("YYYY-MM-DD") for an epoch-ms instant — the daily journal's id. Machine-
+ * local like the week keys above (the app runs on the user's own machine), so "today" agrees between
+ * the SPA and the server. */
+export function dayKeyOf(ms: number): string {
+  const d = new Date(ms);
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
+
+/** True only for a canonical, EXISTING local calendar date ("2026-02-30" round-trips to Mar 2 →
+ * rejected), so a daily entry can't be stored under an id a later read won't find. */
+export function isValidDayKey(key: string): boolean {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(key);
+  if (!m) return false;
+  const d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  return dayKeyOf(d.getTime()) === key;
+}
+
+/** [start, end) epoch-ms for a day key: local midnight to the next local midnight. Advances with
+ * setDate (like weekRange) so a DST edge still lands both boundaries on local midnight. */
+export function dayRange(dayKey: string): { start: number; end: number } {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dayKey)!;
+  const startDate = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  const endDate = new Date(startDate);
+  endDate.setDate(endDate.getDate() + 1);
+  return { start: startDate.getTime(), end: endDate.getTime() };
+}
+
 /** Hold-time bucket for the "by hold-time" breakdown. The documented, gapless contract is
  * `intraday` (<1d), `2-5d` (1d–<6d), `1-2w` (6d–<15d), `2w+` (≥15d), `open` (still-open). */
 export function holdBucket(holdSeconds: number | null): string {

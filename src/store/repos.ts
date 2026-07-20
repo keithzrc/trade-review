@@ -1,5 +1,6 @@
 import type { Database } from "bun:sqlite";
 import type { Flag, RawFill, RawOrder, RawPosition, Trade } from "../domain/types";
+import { flagDef } from "../domain/flag-defs";
 import { getConfigValue, LAST_SNAPSHOT_TIME } from "./config";
 
 /** The clock of the current position snapshot, in preference order: the persisted marker; else the
@@ -182,9 +183,25 @@ export function allTrades(db: Database): Trade[] {
   }));
 }
 
+/** Computed flags MERGED with the user's overrides (store/flag-overrides): dismissed rule ids are
+ * filtered out, manually-added ones appended (severity from the registry default). This is the ONE
+ * read path for flags, so lists, detail, weekly rows and the dashboard all agree with the user's
+ * corrections. An 'add' for a rule the engine also fired is redundant — the computed instance (with
+ * its real reason) wins. */
 export function flagsForTrade(db: Database, tradeId: string): Flag[] {
   const rows = db
     .query(`SELECT rule_id, severity, reason FROM flags WHERE trade_id = ? ORDER BY rule_id ASC`)
     .all(tradeId) as any[];
-  return rows.map((r) => ({ ruleId: r.rule_id, severity: r.severity, reason: r.reason }));
+  const ov = db
+    .query(`SELECT rule_id, mode FROM flag_overrides WHERE trade_id = ?`)
+    .all(tradeId) as Array<{ rule_id: string; mode: string }>;
+  const dismissed = new Set(ov.filter((o) => o.mode === "dismiss").map((o) => o.rule_id));
+  const flags: Flag[] = rows
+    .filter((r) => !dismissed.has(r.rule_id))
+    .map((r) => ({ ruleId: r.rule_id, severity: r.severity, reason: r.reason }));
+  for (const o of ov) {
+    if (o.mode !== "add" || flags.some((f) => f.ruleId === o.rule_id)) continue;
+    flags.push({ ruleId: o.rule_id, severity: flagDef(o.rule_id).defaultSeverity, reason: "Flagged manually." });
+  }
+  return flags.sort((a, b) => a.ruleId.localeCompare(b.ruleId));
 }

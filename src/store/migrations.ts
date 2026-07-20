@@ -189,7 +189,35 @@ export const MIGRATIONS: ReadonlyArray<(db: Database) => void> = [
   (db) => {
     db.run(`ALTER TABLE trades ADD COLUMN realized_so_far REAL;`);
   },
-  // v11 — persist the unreliable-stop verdict: the inferred initial stop can't be the real risk basis
+  // v11 — user flag overrides: dismiss a computed flag you disagree with, or add one the engine
+  // missed. USER data (like journal/drawings): orphan-tolerant, no FK to trades, and it lives in its
+  // own table so every sync's flags rebuild (DELETE + reinsert) can't wipe it. Merged at read time.
+  (db) => {
+    db.run(`
+      CREATE TABLE flag_overrides (
+        trade_id TEXT NOT NULL, rule_id TEXT NOT NULL,
+        mode TEXT NOT NULL,             -- 'add' | 'dismiss'
+        updated_at INTEGER NOT NULL,
+        PRIMARY KEY (trade_id, rule_id)
+      );
+    `);
+  },
+  // v12 — daily journal (the Daily page): the user's market view per local calendar day, plus a
+  // frozen JSON snapshot of that day's sector/index heatmap so a past day reads as it looked THEN
+  // (later candle revisions / list edits can't rewrite history). USER data — no FK anywhere.
+  (db) => {
+    db.run(`
+      CREATE TABLE daily_entries (
+        id TEXT PRIMARY KEY,            -- local date key "YYYY-MM-DD"
+        regime TEXT,                    -- 'UPTREND' | 'CHOP' | 'DOWNTREND'
+        market_read TEXT, notes TEXT,
+        snapshot TEXT,                  -- heatmap response JSON captured at save time
+        snapshot_at INTEGER,
+        updated_at INTEGER NOT NULL
+      );
+    `);
+  },
+  // v13 — persist the unreliable-stop verdict: the inferred initial stop can't be the real risk basis
   // (price ran past it while the trade was still open — a trailed stop reported by FUTU as the initial
   // trigger). Drives the unreliable_stop flag and the R-average exclusion. Derived column, and
   // deliberately NULLABLE (no DEFAULT): NULL means "not yet re-derived", which the reader treats as

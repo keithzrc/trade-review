@@ -8,6 +8,7 @@ import { UpdateBanner } from "./UpdateBanner";
 
 const NAV = [
   { href: "/", label: "Dashboard", icon: "M3 12h4l2-7 4 14 2-7h4" },
+  { href: "/daily", label: "Daily market", icon: "M4 5h12v12H4zM4 8h12M7 3v3M13 3v3" },
   { href: "/trades", label: "Trades", icon: "M3 5h14M3 10h14M3 15h9" },
   { href: "/positions", label: "Positions", icon: "M3 15l4-4 3 3 6-7" },
   { href: "/journal", label: "Weekly journal", icon: "M5 3h8l3 3v11H5zM12 3v4h4" },

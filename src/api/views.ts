@@ -15,6 +15,7 @@ import {
   snapshotClock,
 } from "../store/repos";
 import { distinctEmotions, distinctSetups, distinctTags, getJournal } from "../store/journal";
+import { getFlagOverrides, type FlagOverrides } from "../store/flag-overrides";
 import { equityAsOf, latestEquityByCurrency } from "../store/funds";
 import pkg from "../../package.json";
 
@@ -168,6 +169,9 @@ export interface TradeDetail {
   // clock, so the UI can say how fresh the holding/stop are (they only move on sync).
   currentQty: number;
   positionAsOf: number;
+  // The user's flag corrections (already merged into `flags`); surfaced so the editor can tell a
+  // manual flag from a computed one and offer to restore dismissed ones.
+  flagOverrides: FlagOverrides;
 }
 
 export function tradeDetail(db: Database, id: string): TradeDetail | null {
@@ -201,6 +205,7 @@ export function tradeDetail(db: Database, id: string): TradeDetail | null {
     sizePct,
     currentQty: held?.qty ?? 0,
     positionAsOf,
+    flagOverrides: getFlagOverrides(db, id),
   };
 }
 

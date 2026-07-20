@@ -28,3 +28,16 @@ export interface WatchlistItem {
   note: string | null;
   keyLevel: number | null;
 }
+
+export type MarketRegime = "UPTREND" | "CHOP" | "DOWNTREND";
+
+/** Optional daily journal entry (the Daily page). `snapshotAt` says whether/when the day's heatmap
+ * was frozen — the snapshot body itself travels separately (it's bulky and web-typed). */
+export interface DailyEntry {
+  id: string; // local date key "YYYY-MM-DD"
+  regime: MarketRegime | null;
+  marketRead: string | null; // the user's view on the market that day
+  notes: string | null; // session / emotional notes
+  snapshotAt: number | null; // when the heatmap snapshot was captured (null = none saved)
+  updatedAt: number;
+}

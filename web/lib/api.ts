@@ -10,11 +10,11 @@ import type {
   StopInfo,
   Trade,
 } from "../../src/domain/types";
-import type { Journal, WeeklyEntry, WatchlistItem } from "../../src/domain/journal-types";
+import type { DailyEntry, Journal, MarketRegime, WeeklyEntry, WatchlistItem } from "../../src/domain/journal-types";
 import type { Drawing } from "../../src/store/drawings";
 import type { Res } from "../../src/core/candle-res"; // single source of truth for the resolution union
 
-export type { Breakdown, Candle, Flag, Stats, Trade, StopInfo, RawFill, RawOrder, Journal, WeeklyEntry, WatchlistItem, Drawing, Res };
+export type { Breakdown, Candle, Flag, Stats, Trade, StopInfo, RawFill, RawOrder, Journal, WeeklyEntry, WatchlistItem, Drawing, Res, DailyEntry, MarketRegime };
 
 /** A trade row from GET /api/trades — base Trade plus embedded journal/flags for the list. */
 export interface TradeRow extends Trade {
@@ -39,6 +39,60 @@ export interface TradeDetail {
   sizePct: number | null; // positionSize / account equity
   currentQty: number; // signed current holding from the latest snapshot (0 when flat/closed)
   positionAsOf: number; // that snapshot's clock (how fresh the holding/stop are)
+  // The user's flag corrections (already merged into `flags`): which shown flags are manual, and
+  // which computed ones are dismissed (so the editor can offer restore).
+  flagOverrides: { added: string[]; dismissed: string[] };
+}
+
+// ---- Daily market heatmap ----
+export interface HeatmapRow {
+  symbol: string;
+  label: string | null; // user-editable industry/name shown beside the ticker
+  last: number | null;
+  dayPct: number | null;
+  p5dPct: number | null;
+  p20dPct?: number | null; // 20-session return (RS ingredient); optional: pre-feature snapshots lack it
+  p1mPct?: number | null; // ~21-session "1-month" return
+  rs20Pct?: number | null; // 20-session return vs SPY, ratio-based excess
+  ma20Pct?: number | null; // close vs 20-session SMA
+  ma50Pct?: number | null; // close vs 50-session SMA
+  volVs20d?: number | null; // latest volume ÷ prior-20-session average (ratio, 1 = normal)
+  off52wPct: number | null; // ≤ 0: distance below the trailing-52-week high
+  ytdPct: number | null;
+}
+export interface HeatmapGroupRows {
+  name: string;
+  rows: HeatmapRow[];
+}
+/** The auto-ranked thematic list: the FULL universe sorted by 5-day % change (descending, no-data
+ * last). Display slices the top N; edit mode shows the whole thing. */
+export interface ThematicRanking {
+  rankedBy: "p5dPct";
+  topN: number;
+  universeSize: number;
+  rows: HeatmapRow[];
+  // The user's CONFIG order (related narratives adjacent) — what edit mode shows and reorders.
+  // Optional: snapshots frozen before this feature don't carry it.
+  universe?: HeatmapSymbolEntry[];
+}
+export interface HeatmapResponse {
+  asOf: number;
+  groups: HeatmapGroupRows[];
+  thematic?: ThematicRanking; // optional: snapshots frozen before this feature don't have it
+}
+export interface HeatmapSymbolEntry {
+  symbol: string;
+  label: string | null;
+}
+export interface HeatmapGroups {
+  groups: Array<{ name: string; symbols: HeatmapSymbolEntry[] }>;
+}
+
+/** Daily journal view: the entry plus its frozen heatmap (null until a today-save captures one) and
+ * the trades opened/closed that local day (associated at read time, like the weekly view). */
+export interface DailyView extends DailyEntry {
+  snapshot: HeatmapResponse | null;
+  trades: Trade[];
 }
 
 export interface OpenPosition {
@@ -176,6 +230,18 @@ export const api = {
     send<OpendSettings>("/api/settings/opend", "PUT", body),
   putJournal: (id: string, body: Record<string, unknown>) =>
     send<TradeDetail>(`/api/trades/${encodeURIComponent(id)}/journal`, "PUT", body),
+  putFlags: (id: string, body: { added: string[]; dismissed: string[] }) =>
+    send<TradeDetail>(`/api/trades/${encodeURIComponent(id)}/flags`, "PUT", body),
+  heatmap: () => get<HeatmapResponse>("/api/market/heatmap"),
+  heatmapGroups: () => get<HeatmapGroups>("/api/market/symbols"),
+  putHeatmapGroups: (groups: Array<{ name: string; symbols: HeatmapSymbolEntry[] }>) =>
+    send<HeatmapGroups>("/api/market/symbols", "PUT", { groups }),
+  resetHeatmapGroups: () => send<HeatmapGroups>("/api/market/symbols", "DELETE"),
+  putThematic: (symbols: HeatmapSymbolEntry[]) =>
+    send<{ symbols: HeatmapSymbolEntry[] }>("/api/market/thematic", "PUT", { symbols }),
+  day: (dayKey: string) => get<DailyView>(`/api/journal/days/${dayKey}`),
+  putDay: (dayKey: string, body: Record<string, unknown>) =>
+    send<DailyView>(`/api/journal/days/${dayKey}`, "PUT", body),
   drawings: (id: string) => get<{ drawings: Drawing[] }>(`/api/trades/${encodeURIComponent(id)}/drawings`),
   putDrawings: (id: string, drawings: Drawing[]) =>
     send<{ drawings: Drawing[] }>(`/api/trades/${encodeURIComponent(id)}/drawings`, "PUT", { drawings }),

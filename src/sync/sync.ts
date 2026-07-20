@@ -328,9 +328,13 @@ export async function rebuildDerived(
     //     unreliable_stop AND no_stop together. So an unreliable stop always implies a present R.
     //   - `ms == null`: a manual stop is the AUTHORITATIVE override (isUnreliableStop exempts it) — it
     //     must clear the flag immediately, never stay stuck behind the carry.
-    //   - `initialStopType !== "STOP_LIMIT"`: a stop-limit can legitimately TRIGGER but not FILL on a
-    //     gap, so a breach doesn't prove it moved — its trigger may be the real stop and the loss a
-    //     genuine excess_loss. Only market stops (plain STOP / TRAILING_STOP) reliably fill on breach.
+    //   - `initialStopType !== "STOP_LIMIT"`: a PLAIN stop-limit's trigger IS the intended initial
+    //     stop, and it can legitimately TRIGGER but not FILL on a gap — so a breach doesn't prove it
+    //     moved; the trigger may be the real stop and the deeper loss a genuine excess_loss. Exempt it.
+    //     A TRAILING stop (FUTU type 14 AND the trailing-stop-LIMIT type 15, both normalized to
+    //     TRAILING_STOP) is deliberately NOT exempt: FUTU stores only its FINAL trailed trigger, never
+    //     the initial, so its R is suspect BY NATURE — a mid-hold breach of even that final trigger is
+    //     exactly the unreliable case we want to flag (prompting a Manual stop), fill-or-not.
     //   - losers only: a winner can never be an unreliable-stop loss.
     const eligibleForUnreliable =
       risk !== null &&
